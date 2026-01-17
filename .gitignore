@@ -1,6 +1,4 @@
 credentials.priv
-bulk/
-*.csv
 logs/
 *.log
 __pycache__/
