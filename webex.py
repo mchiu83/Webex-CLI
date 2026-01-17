@@ -12,6 +12,7 @@ from libraries.create_workspace import create_workspace
 from libraries.update_workspace import update_workspace
 from libraries.delete_workspace import delete_workspace
 from libraries.bulk_create_workspaces import bulk_create_workspaces
+from libraries.aso_bulk_import import aso_bulk_import_tool
 
 class TeeOutput:
     def __init__(self, *files):
@@ -157,17 +158,21 @@ class WebexCLI:
                 "Main Menu",
                 [
                     "Workspace Management",
+                    "ASO Bulk Import Tool",
                     "Exit"
                 ]
             )
             
-            if choice == "/b" or choice == "2":
+            if choice == "/b" or choice == "3":
                 print("\nExiting...")
                 print("Session ended")
                 self.cleanup()
                 break
             elif choice == "1":
                 self.workspace_menu()
+            elif choice == "2":
+                aso_bulk_import_tool(self.api)
+                input("\nPress Enter to continue...")
             else:
                 print("Invalid choice. Please try again.")
     
