@@ -313,6 +313,61 @@ def validate_webex_users_data(filepath):
     print(f"  Status: PASS - All {len(data_rows)} rows validated successfully")
     return True
 
+def validate_available_numbers(api, location_data, filepath):
+    """Validation 5: Validate phone numbers in Column D against available location numbers"""
+    print(f"\nValidation 5: Validating phone number availability...")
+    
+    # Get available numbers for location
+    print(f"  Fetching available numbers for location...")
+    location_id = location_data['id']
+    numbers_result = api.call("GET", f"telephony/config/locations/{location_id}/availableNumbers", 
+                             params={"orgId": api.org_id})
+    
+    if "error" in numbers_result:
+        print(f"  Status: FAILED - Error fetching available numbers: {numbers_result['error']}")
+        return False
+    
+    phone_numbers = numbers_result.get("phoneNumbers", [])
+    
+    # Filter for available numbers (no owner, not main number, state is ACTIVE)
+    available_location_numbers = []
+    for num in phone_numbers:
+        if (not num.get('owner') and 
+            not num.get('isMainNumber', False) and 
+            num.get('state') == 'ACTIVE'):
+            available_location_numbers.append(num['phoneNumber'])
+    
+    print(f"  Found {len(available_location_numbers)} available numbers")
+    
+    # Read Webex Users sheet
+    users_data = read_excel_sheet(filepath, 'Webex Users')
+    if not users_data or len(users_data) < 2:
+        print(f"  Status: FAILED - Could not read 'Webex Users' sheet")
+        return False
+    
+    headers = users_data[0]
+    data_rows = users_data[1:]
+    
+    # Check column D (index 3) phone numbers
+    for row_idx, row in enumerate(data_rows, start=2):
+        if len(row) > 3 and row[3] and str(row[3]).strip() != '':
+            # Get 10-digit number from column D
+            phone_10digit = str(row[3]).strip()
+            
+            # Convert to E.164 format (+1XXXXXXXXXX)
+            phone_e164 = f"+1{phone_10digit}"
+            
+            # Check if number is in available list
+            if phone_e164 not in available_location_numbers:
+                col_name = str(headers[3]).replace('\n', ' ').replace('\r', ' ') if 3 < len(headers) else "Column D"
+                print(f"  Status: FAILED - Row {row_idx}: Phone number '{phone_10digit}' in '{col_name}' is not available")
+                print(f"  The number {phone_e164} is not found in available PSTN numbers for this location.")
+                print(f"  Please check that the assigned number is available as a PSTN number in the Webex Location.")
+                return False
+    
+    print(f"  Status: PASS - All phone numbers are available")
+    return True
+
 def aso_bulk_import_tool(api):
     """Main function for ASO Bulk Import Tool"""
     print("\n--- ASO Bulk Import Tool ---")
@@ -361,6 +416,11 @@ def aso_bulk_import_tool(api):
     
     # Validate Webex Users data
     if not validate_webex_users_data(filepath):
+        print("\nValidation failed. Returning to previous menu.")
+        return
+    
+    # Validate available phone numbers
+    if not validate_available_numbers(api, location, filepath):
         print("\nValidation failed. Returning to previous menu.")
         return
     
