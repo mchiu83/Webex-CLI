@@ -1,17 +1,16 @@
 PHONE_MODELS = [
-    "Cisco IP Phone 6821", "Cisco IP Phone 6841", "Cisco IP Phone 6851", "Cisco IP Phone 6861",
-    "Cisco IP Phone 6861 Wi-Fi", "Cisco IP Phone 6871", "Cisco IP Phone 6871 with color display",
-    "Cisco IP Phone 7811", "Cisco IP Phone 7821", "Cisco IP Phone 7841", "Cisco IP Phone 7861",
+    "Cisco 6821", "Cisco 6841", "Cisco 6851", "Cisco 6861",
+    "Cisco 6861 Wi-Fi", "Cisco 6871", "Cisco 6871",
+    "Cisco 7811", "Cisco 7821", "Cisco 7841", "Cisco 7861",
     "Cisco 8811", "Cisco 8841", "Cisco 8851", "Cisco 8861",
     "Cisco 8845", "Cisco 8865", "Cisco 8875",
-    "Cisco Desk Phone 9841", "Cisco Desk Phone 9851", "Cisco Desk Phone 9861", "Cisco Desk Phone 9871",
-    "Cisco IP DECT 6800 Series", "Cisco IP DECT 6823 Handset", "Cisco IP DECT 6825 Handset",
-    "Cisco IP DECT 6825 Handset Ruggedized", "Cisco IP DECT DBS 110 Base Station", "Cisco IP DECT 210 Base-Station",
+    "Cisco 9841", "Cisco 9851", "Cisco 9861", "Cisco 9871",
+    "Cisco 6823", "Cisco 6825",
     "Cisco 840", "Cisco 860",
-    "Cisco IP Conference Phone 7832", "Cisco IP Conference Phone 8832",
-    "Polycom SoundStation IP 5000", "Polycom SoundStation IP 6000",
-    "ATA191 Multiplatform", "ATA192 Multiplatform",
-    "VG400 ATA", "VG410 ATA", "VG420 ATA"
+    "Cisco 7832", "Cisco 8832",
+    "Polycom 5000", "Polycom 6000",
+    "ATA191", "ATA192",
+    "VG400", "VG410", "VG420"
 ]
 
 COLLAB_MODELS = [
