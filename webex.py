@@ -40,7 +40,7 @@ class WebexCLI:
         os.makedirs("logs", exist_ok=True)
         
         # CLI output logger - capture all console output
-        cli_log = f"logs/webexapi_{self.session_id}.log"
+        cli_log = f"logs/clisession_{self.session_id}.log"
         self.cli_log_file = open(cli_log, 'w')
         sys.stdout = TeeOutput(sys.__stdout__, self.cli_log_file)
         sys.stderr = TeeOutput(sys.__stderr__, self.cli_log_file)

@@ -2,6 +2,7 @@ import os
 import glob
 import openpyxl
 import xlrd
+import re
 
 def find_aso_import_file():
     """Find Excel file with prefix 'aso_import' in bulk directory"""
@@ -19,6 +20,28 @@ def find_aso_import_file():
             return files[0]
     
     return None
+
+def read_excel_sheet(filepath, sheet_name):
+    """Read data from specific Excel sheet"""
+    try:
+        if filepath.endswith('.xlsx'):
+            wb = openpyxl.load_workbook(filepath, read_only=True, data_only=True)
+            ws = wb[sheet_name]
+            data = []
+            for row in ws.iter_rows(values_only=True):
+                data.append(row)
+            wb.close()
+            return data
+        elif filepath.endswith('.xls'):
+            wb = xlrd.open_workbook(filepath, formatting_info=False)
+            ws = wb.sheet_by_name(sheet_name)
+            data = []
+            for row_idx in range(ws.nrows):
+                data.append(ws.row_values(row_idx))
+            return data
+    except Exception as e:
+        print(f"Error reading sheet '{sheet_name}': {str(e)}")
+        return None
 
 def validate_excel_file(filepath):
     """Validate Excel file structure and required tabs"""
@@ -81,6 +104,215 @@ def validate_excel_file(filepath):
         print(f"\nStatus: FAILED - Error reading Excel file: {str(e)}")
         return False, None
 
+def validate_location(api, filepath):
+    """Validation 3: Infer and validate location from Webex Users sheet"""
+    print(f"\nValidation 3: Inferring and validating location...")
+    
+    # Read Webex Users sheet
+    users_data = read_excel_sheet(filepath, 'Webex Users')
+    if not users_data:
+        print(f"  Status: FAILED - Could not read 'Webex Users' sheet")
+        return None
+    
+    # Find Location Name column
+    headers = users_data[0]
+    location_col_idx = None
+    
+    for idx, header in enumerate(headers):
+        if header and 'Location Name' in str(header):
+            location_col_idx = idx
+            break
+    
+    if location_col_idx is None:
+        print(f"  Status: FAILED - 'Location Name' column not found in 'Webex Users' sheet")
+        return None
+    
+    # Get location name from first data row
+    if len(users_data) < 2:
+        print(f"  Status: FAILED - No data rows found in 'Webex Users' sheet")
+        return None
+    
+    inferred_location = None
+    for row in users_data[1:]:
+        if row[location_col_idx]:
+            inferred_location = str(row[location_col_idx]).strip()
+            break
+    
+    if not inferred_location:
+        print(f"  Status: FAILED - No location name found in data rows")
+        return None
+    
+    print(f"  Inferred Location: {inferred_location}")
+    
+    # Fetch telephony locations from Webex API
+    print(f"  Fetching telephony locations from Webex API...")
+    locations_result = api.call("GET", "telephony/config/locations", params={"orgId": api.org_id})
+    
+    if "error" in locations_result:
+        print(f"  Status: FAILED - Error fetching locations: {locations_result['error']}")
+        return None
+    
+    locations = locations_result.get("locations", [])
+    
+    # Find matching location (case-insensitive)
+    matched_location = None
+    for loc in locations:
+        if loc.get('name', '').lower() == inferred_location.lower():
+            matched_location = loc
+            break
+    
+    if matched_location:
+        print(f"  Status: PASS - Location match found")
+        print(f"  Location ID: {matched_location['id']}")
+        print(f"  Location Name: {matched_location['name']}")
+        
+        # Get calling line ID phone number
+        calling_line_id = matched_location.get('callingLineId', {})
+        phone_number = calling_line_id.get('phoneNumber')
+        if phone_number:
+            print(f"  Calling Line ID: {phone_number}")
+        else:
+            print(f"  Calling Line ID: None")
+        
+        # Store location data
+        location_data = {
+            'id': matched_location['id'],
+            'name': matched_location['name'],
+            'callingLineId': phone_number
+        }
+        
+        return location_data
+    else:
+        print(f"  Status: FAILED - Location '{inferred_location}' not found in organization.")
+        print(f"  Be sure the location is created before proceeding.")
+        return None
+
+def validate_webex_users_data(filepath):
+    """Validation 4: Validate Webex Users sheet data"""
+    print(f"\nValidation 4: Validating Webex Users data...")
+    
+    # Read Webex Users sheet
+    users_data = read_excel_sheet(filepath, 'Webex Users')
+    if not users_data or len(users_data) < 2:
+        print(f"  Status: FAILED - Could not read 'Webex Users' sheet or no data rows")
+        return False
+    
+    headers = users_data[0]
+    data_rows = users_data[1:]
+    
+    # Define optional columns (A=0, B=1, D=3, F=5, G=6, I=8, N=13, O=14, P=15, Q=16, R=17, S=18)
+    optional_cols = [0, 1, 3, 5, 6, 8, 13, 14, 15, 16, 17, 18]
+    
+    # Track MAC addresses for duplicate check
+    mac_addresses = []
+    
+    # Validate each row
+    for row_idx, row in enumerate(data_rows, start=2):
+        # Step 1: Check mandatory columns (only A through S, indices 0-18)
+        for col_idx in range(min(19, len(headers))):
+            if col_idx not in optional_cols:
+                if col_idx >= len(row) or not row[col_idx] or str(row[col_idx]).strip() == '':
+                    col_name = str(headers[col_idx]).replace('\n', ' ').replace('\r', ' ') if col_idx < len(headers) else f"Column {chr(65 + col_idx)}"
+                    print(f"  Status: FAILED - Row {row_idx}: Missing required value in '{col_name}'")
+                    print(f"  Row data: {row[:19]}")  # Only show columns A-S
+                    return False
+        
+        # Step 2: Validate MAC address in column L (index 11)
+        if len(row) <= 11 or not row[11] or str(row[11]).strip() == '':
+            col_name = str(headers[11]).replace('\n', ' ').replace('\r', ' ') if 11 < len(headers) else "Column L"
+            print(f"  Status: FAILED - Row {row_idx}: Missing MAC address in '{col_name}'")
+            print(f"  Row data: {row}")
+            return False
+        
+        mac_raw = str(row[11]).strip()
+        # Remove dashes, spaces, colons and validate format
+        mac_clean = re.sub(r'[-:\s]', '', mac_raw).upper()
+        if not re.match(r'^[0-9A-F]{12}$', mac_clean):
+            col_name = str(headers[11]).replace('\n', ' ').replace('\r', ' ') if 11 < len(headers) else "Column L"
+            print(f"  Status: FAILED - Row {row_idx}: Invalid MAC address format in '{col_name}': '{mac_raw}'")
+            print(f"  Row data: {row}")
+            return False
+        
+        mac_addresses.append(mac_clean)
+        
+        # Step 3: Validate column J (index 9) - must be 'non-user' or 'user'
+        if len(row) <= 9 or not row[9]:
+            col_name = str(headers[9]).replace('\n', ' ').replace('\r', ' ') if 9 < len(headers) else "Column J"
+            print(f"  Status: FAILED - Row {row_idx}: Missing value in '{col_name}'")
+            print(f"  Row data: {row}")
+            return False
+        
+        col_j_value = str(row[9]).strip().lower()
+        if col_j_value not in ['non-user', 'user']:
+            col_name = str(headers[9]).replace('\n', ' ').replace('\r', ' ') if 9 < len(headers) else "Column J"
+            print(f"  Status: FAILED - Row {row_idx}: '{col_name}' must be 'non-user' or 'user', got '{row[9]}'")
+            print(f"  Row data: {row}")
+            return False
+        
+        # Step 4: Validate column E (index 4) - must be numeric
+        if len(row) > 4 and row[4] and str(row[4]).strip() != '':
+            try:
+                float(row[4])
+            except ValueError:
+                col_name = str(headers[4]).replace('\n', ' ').replace('\r', ' ') if 4 < len(headers) else "Column E"
+                print(f"  Status: FAILED - Row {row_idx}: '{col_name}' must be numeric, got '{row[4]}'")
+                print(f"  Row data: {row}")
+                return False
+        
+        # Step 5: Validate column D (index 3) - must be empty or 10 digit numeric
+        if len(row) > 3 and row[3] and str(row[3]).strip() != '':
+            col_d_value = str(row[3]).strip()
+            if not col_d_value.isdigit() or len(col_d_value) != 10:
+                col_name = str(headers[3]).replace('\n', ' ').replace('\r', ' ') if 3 < len(headers) else "Column D"
+                print(f"  Status: FAILED - Row {row_idx}: '{col_name}' must be empty or 10 digit numeric, got '{row[3]}'")
+                print(f"  Row data: {row}")
+                return False
+        
+        # Step 6: Validate column O (index 14) - must be empty or numeric <= 15
+        if len(row) > 14 and row[14] and str(row[14]).strip() != '':
+            try:
+                col_o_value = float(row[14])
+                if col_o_value > 15:
+                    col_name = str(headers[14]).replace('\n', ' ').replace('\r', ' ') if 14 < len(headers) else "Column O"
+                    print(f"  Status: FAILED - Row {row_idx}: '{col_name}' must be <= 15, got '{row[14]}'")
+                    print(f"  Row data: {row}")
+                    return False
+            except ValueError:
+                col_name = str(headers[14]).replace('\n', ' ').replace('\r', ' ') if 14 < len(headers) else "Column O"
+                print(f"  Status: FAILED - Row {row_idx}: '{col_name}' must be numeric, got '{row[14]}'")
+                print(f"  Row data: {row}")
+                return False
+        
+        # Step 7: Validate column P (index 15) and R (index 17) - must be 'yes', 'no', or empty
+        for col_idx, col_letter in [(15, 'P'), (17, 'R')]:
+            if len(row) > col_idx and row[col_idx] and str(row[col_idx]).strip() != '':
+                col_value = str(row[col_idx]).strip().lower()
+                if col_value not in ['yes', 'no']:
+                    col_name = str(headers[col_idx]).replace('\n', ' ').replace('\r', ' ') if col_idx < len(headers) else f"Column {col_letter}"
+                    print(f"  Status: FAILED - Row {row_idx}: '{col_name}' must be 'yes', 'no', or empty, got '{row[col_idx]}'")
+                    print(f"  Row data: {row}")
+                    return False
+        
+        # Step 8: Validate column N (index 13) and Q (index 16) - must be empty or numeric
+        for col_idx, col_letter in [(13, 'N'), (16, 'Q')]:
+            if len(row) > col_idx and row[col_idx] and str(row[col_idx]).strip() != '':
+                try:
+                    float(row[col_idx])
+                except ValueError:
+                    col_name = str(headers[col_idx]).replace('\n', ' ').replace('\r', ' ') if col_idx < len(headers) else f"Column {col_letter}"
+                    print(f"  Status: FAILED - Row {row_idx}: '{col_name}' must be numeric, got '{row[col_idx]}'")
+                    print(f"  Row data: {row}")
+                    return False
+    
+    # Check for duplicate MAC addresses
+    if len(mac_addresses) != len(set(mac_addresses)):
+        duplicates = [mac for mac in set(mac_addresses) if mac_addresses.count(mac) > 1]
+        print(f"  Status: FAILED - Duplicate MAC addresses found: {', '.join(duplicates)}")
+        return False
+    
+    print(f"  Status: PASS - All {len(data_rows)} rows validated successfully")
+    return True
+
 def aso_bulk_import_tool(api):
     """Main function for ASO Bulk Import Tool"""
     print("\n--- ASO Bulk Import Tool ---")
@@ -119,5 +351,17 @@ def aso_bulk_import_tool(api):
         print(f"\nAdditional tabs detected and cached:")
         for i, tab in enumerate(additional_tabs, 1):
             print(f"  {i}. {tab}")
+    
+    # Validate location
+    location = validate_location(api, filepath)
+    
+    if not location:
+        print("\nValidation failed. Returning to previous menu.")
+        return
+    
+    # Validate Webex Users data
+    if not validate_webex_users_data(filepath):
+        print("\nValidation failed. Returning to previous menu.")
+        return
     
     print("\nValidation complete. Ready for next steps.")
