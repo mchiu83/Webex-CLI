@@ -1,0 +1,4 @@
+id,location,displayName,supportedDevices,type,capacity,calling,extension,phoneNumber,phoneModel,macaddress
+,Houston,Ming Test 1,phones,,,webexCalling,4001,,Cisco 8841,abcd44339999
+,Houston,Ming Test 2,phones,,,webexCalling,4002,,Cisco 9851,
+,Dallas,Ming Test 3,,,,,,,,

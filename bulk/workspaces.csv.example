@@ -1,0 +1,4 @@
+id,location,displayName,supportedDevices,type,capacity,calling,extension,phoneNumber,phoneModel,macaddress
+,Main Office,Conference Room 1,phones,meetingRoom,10,webexCalling,4001,5551234567,Cisco 8841,
+,Main Office,Huddle Space A,collaborationDevices,huddle,4,webexCalling,4002,,Cisco Webex Desk,
+,,Open Workspace 1,phones,open,20,none,,,,,

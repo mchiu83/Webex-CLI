@@ -11,6 +11,7 @@ from libraries.view_workspace import view_workspace_details
 from libraries.create_workspace import create_workspace
 from libraries.update_workspace import update_workspace
 from libraries.delete_workspace import delete_workspace
+from libraries.bulk_create_workspaces import bulk_create_workspaces
 
 class TeeOutput:
     def __init__(self, *files):
@@ -118,7 +119,8 @@ class WebexCLI:
                     "View Workspace Details",
                     "Create Workspace",
                     "Update Workspace",
-                    "Delete Workspace"
+                    "Delete Workspace",
+                    "Bulk Create Workspaces"
                 ]
             )
             
@@ -138,6 +140,9 @@ class WebexCLI:
                 input("\nPress Enter to continue...")
             elif choice == "5":
                 delete_workspace(self.api)
+                input("\nPress Enter to continue...")
+            elif choice == "6":
+                bulk_create_workspaces(self.api)
                 input("\nPress Enter to continue...")
             else:
                 print("Invalid choice. Please try again.")
