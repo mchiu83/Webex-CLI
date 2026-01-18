@@ -177,6 +177,78 @@ def validate_location(api, filepath):
         else:
             print(f"  Calling Line ID: None")
         
+        # Check location outgoing permissions
+        print(f"\n  Checking location outgoing permissions...")
+        location_id = matched_location['id']
+        perm_result = api.call("GET", f"telephony/config/locations/{location_id}/outgoingPermission", 
+                              params={"orgId": api.org_id})
+        
+        if "error" in perm_result:
+            print(f"  Status: FAILED - Error fetching outgoing permissions: {perm_result['error']}")
+            return None
+        
+        permissions = perm_result.get('callingPermissions', [])
+        
+        # Display permissions table
+        print(f"\n  Location Outgoing Permissions:")
+        print(f"  {'Call Type':<35} {'Action':<10} {'Transfer'}")
+        print(f"  {'-'*55}")
+        
+        mismatches = []
+        for perm in permissions:
+            call_type = perm.get('callType', '')
+            action = perm.get('action', '')
+            transfer = perm.get('transferEnabled', False)
+            print(f"  {call_type:<35} {action:<10} {transfer}")
+            
+            # Skip ignored call types
+            if call_type in ['CASUAL', 'URL_DIALING', 'UNKNOWN']:
+                continue
+            
+            # Check expected values
+            if call_type == 'INTERNAL_CALL':
+                if action != 'ALLOW' or transfer != True:
+                    mismatches.append(call_type)
+            else:
+                if action != 'BLOCK' or transfer != False:
+                    mismatches.append(call_type)
+        
+        if not mismatches:
+            print(f"\n  Status: PASS - Location permissions match expected configuration")
+        else:
+            print(f"\n  Status: WARNING - Location permissions do not match expected configuration")
+            print(f"  Mismatched call types: {', '.join(mismatches)}")
+            
+            modify = input("\n  Modify location outgoing permissions to default? (y/n): ").strip().lower()
+            if modify == 'y':
+                print(f"  Updating location outgoing permissions...")
+                
+                update_data = {
+                    "callingPermissions": [
+                        {"callType": "INTERNAL_CALL", "action": "ALLOW", "transferEnabled": True},
+                        {"callType": "TOLL_FREE", "action": "BLOCK", "transferEnabled": False},
+                        {"callType": "INTERNATIONAL", "action": "BLOCK", "transferEnabled": False},
+                        {"callType": "OPERATOR_ASSISTED", "action": "BLOCK", "transferEnabled": False},
+                        {"callType": "CHARGEABLE_DIRECTORY_ASSISTED", "action": "BLOCK", "transferEnabled": False},
+                        {"callType": "SPECIAL_SERVICES_I", "action": "BLOCK", "transferEnabled": False},
+                        {"callType": "SPECIAL_SERVICES_II", "action": "BLOCK", "transferEnabled": False},
+                        {"callType": "PREMIUM_SERVICES_I", "action": "BLOCK", "transferEnabled": False},
+                        {"callType": "PREMIUM_SERVICES_II", "action": "BLOCK", "transferEnabled": False},
+                        {"callType": "NATIONAL", "action": "BLOCK", "transferEnabled": False}
+                    ]
+                }
+                
+                update_result = api.call("PUT", f"telephony/config/locations/{location_id}/outgoingPermission",
+                                        data=update_data, params={"orgId": api.org_id})
+                
+                if "error" in update_result:
+                    print(f"  Status: FAILED - Error updating permissions: {update_result['error']}")
+                    return None
+                else:
+                    print(f"  Status: SUCCESS - Location outgoing permissions updated")
+            else:
+                print(f"  Proceeding without modifying location permissions...")
+        
         # Store location data
         location_data = {
             'id': matched_location['id'],
@@ -474,6 +546,39 @@ def configure_call_forwarding(api, workspace_id, row):
     
     return None
 
+def configure_outgoing_permission(api, workspace_id, row):
+    """Configure outgoing calling permissions for workspace"""
+    calling_permission = str(row[18]).strip().lower() if len(row) > 18 and row[18] else None  # Column S
+    
+    # Only configure if Column S is 'custom'
+    if calling_permission != 'custom':
+        return None, False
+    
+    data = {
+        "useCustomEnabled": True,
+        "useCustomPermissions": True,
+        "callingPermissions": [
+            {"callType": "INTERNAL_CALL", "action": "ALLOW", "transferEnabled": True},
+            {"callType": "TOLL_FREE", "action": "ALLOW", "transferEnabled": True},
+            {"callType": "NATIONAL", "action": "ALLOW", "transferEnabled": True},
+            {"callType": "INTERNATIONAL", "action": "BLOCK", "transferEnabled": False},
+            {"callType": "OPERATOR_ASSISTED", "action": "BLOCK", "transferEnabled": False},
+            {"callType": "CHARGEABLE_DIRECTORY_ASSISTED", "action": "BLOCK", "transferEnabled": False},
+            {"callType": "SPECIAL_SERVICES_I", "action": "BLOCK", "transferEnabled": False},
+            {"callType": "SPECIAL_SERVICES_II", "action": "BLOCK", "transferEnabled": False},
+            {"callType": "PREMIUM_SERVICES_I", "action": "BLOCK", "transferEnabled": False},
+            {"callType": "PREMIUM_SERVICES_II", "action": "BLOCK", "transferEnabled": False}
+        ]
+    }
+    
+    result = api.call("PUT", f"workspaces/{workspace_id}/features/outgoingPermission", 
+                     data=data, params={"orgId": api.org_id})
+    
+    if "error" in result:
+        return result['error'], True
+    
+    return None, True
+
 def process_bulk_import(api, location_data, filepath):
     """Process bulk import of workspaces from Excel file"""
     # Read Webex Users sheet
@@ -591,6 +696,28 @@ def process_bulk_import(api, location_data, filepath):
                 results['errors'].append(f"Row {row_idx}: Call forwarding failed - {error}")
             else:
                 print(f"  Success: Call forwarding configured")
+    
+    # Configure outgoing permissions
+    if workspace_map:
+        print(f"\n{'='*60}")
+        print("Configuring Outgoing Calling Permissions")
+        print(f"{'='*60}")
+        
+        for row_idx, workspace_id in workspace_map.items():
+            row = data_rows[row_idx - 2]
+            display_name = str(row[12]).strip() if len(row) > 12 else "Unknown"
+            
+            print(f"\nRow {row_idx}: Checking '{display_name}'...")
+            error, was_configured = configure_outgoing_permission(api, workspace_id, row)
+            
+            if was_configured:
+                if error:
+                    print(f"  Warning: {error}")
+                    results['errors'].append(f"Row {row_idx}: Outgoing permission failed - {error}")
+                else:
+                    print(f"  Success: Custom outgoing permissions configured")
+            else:
+                print(f"  Skipped: No custom permissions required")
     
     # Print summary
     print(f"\n{'='*60}")
