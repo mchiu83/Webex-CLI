@@ -9,8 +9,8 @@ PHONE_MODELS = [
     "Cisco 840", "Cisco 860",
     "Cisco 7832", "Cisco 8832",
     "Polycom 5000", "Polycom 6000",
-    "ATA191", "ATA192",
-    "VG400", "VG410", "VG420"
+    "Cisco 191", "Cisco 192",
+    "Cisco VG400 ATA", "Cisco VG410 ATA", "Cisco VG420 ATA"
 ]
 
 COLLAB_MODELS = [
