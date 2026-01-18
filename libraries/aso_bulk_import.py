@@ -3,6 +3,7 @@ import glob
 import openpyxl
 import xlrd
 import re
+from libraries.add_device import PHONE_MODELS, COLLAB_MODELS
 
 def find_aso_import_file():
     """Find Excel file with prefix 'aso_import' in bulk directory"""
@@ -25,6 +26,8 @@ def read_excel_sheet(filepath, sheet_name):
     """Read data from specific Excel sheet"""
     try:
         if filepath.endswith('.xlsx'):
+            import warnings
+            warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
             wb = openpyxl.load_workbook(filepath, read_only=True, data_only=True)
             ws = wb[sheet_name]
             data = []
@@ -368,6 +371,245 @@ def validate_available_numbers(api, location_data, filepath):
     print(f"  Status: PASS - All phone numbers are available")
     return True
 
+def create_workspace_from_row(api, location_data, row, headers):
+    """Create workspace from Excel row data"""
+    # Extract data from row
+    display_name = str(row[12]).strip() if len(row) > 12 else ""  # Column M
+    phone_number = str(row[3]).strip() if len(row) > 3 and row[3] else None  # Column D
+    extension = str(row[4]).strip() if len(row) > 4 else ""  # Column E
+    device_model = str(row[10]).strip() if len(row) > 10 else ""  # Column K
+    mac_address = str(row[11]).strip() if len(row) > 11 else ""  # Column L
+    
+    # Determine supported devices based on model
+    if device_model in PHONE_MODELS:
+        supported_devices = "phones"
+    elif device_model in COLLAB_MODELS:
+        supported_devices = "collaborationDevices"
+    else:
+        supported_devices = "collaborationDevices"  # Default
+    
+    # Build workspace data
+    data = {
+        "displayName": display_name,
+        "orgId": api.org_id,
+        "type": "notSet",
+        "supportedDevices": supported_devices,
+        "locationId": location_data['id'],
+        "calling": {
+            "type": "webexCalling",
+            "webexCalling": {
+                "extension": extension,
+                "locationId": location_data['id']
+            }
+        }
+    }
+    
+    # Add phone number if provided (convert to E.164)
+    if phone_number and phone_number.isdigit() and len(phone_number) == 10:
+        data["calling"]["webexCalling"]["phoneNumber"] = f"+1{phone_number}"
+    
+    # Create workspace
+    result = api.call("POST", "workspaces", data=data)
+    
+    if "error" in result:
+        return None, result['error']
+    
+    workspace_id = result.get("id")
+    
+    # Add device via MAC address
+    if workspace_id and mac_address and device_model:
+        # Clean MAC address
+        mac_clean = re.sub(r'[-:\s]', '', mac_address).upper()
+        mac_formatted = ':'.join(mac_clean[i:i+2] for i in range(0, 12, 2))
+        
+        device_data = {
+            "mac": mac_formatted,
+            "model": device_model,
+            "workspaceId": workspace_id
+        }
+        
+        device_result = api.call("POST", "devices", data=device_data, params={"orgId": api.org_id})
+        
+        if "error" in device_result:
+            return workspace_id, f"Workspace created but device failed: {device_result['error']}"
+    
+    return workspace_id, None
+
+def configure_call_forwarding(api, workspace_id, row):
+    """Configure call forwarding and business continuity for workspace"""
+    forward_no_answer = str(row[13]).strip() if len(row) > 13 and row[13] else None  # Column N
+    num_rings = str(row[14]).strip() if len(row) > 14 and row[14] else "3"  # Column O
+    forward_disconnect = str(row[16]).strip() if len(row) > 16 and row[16] else None  # Column Q
+    
+    # Check if any forwarding is needed
+    if not forward_no_answer and not forward_disconnect:
+        return None
+    
+    # Always include callForwarding structure
+    data = {
+        "callForwarding": {
+            "always": {},
+            "busy": {"enabled": False},
+            "noAnswer": {
+                "enabled": True if forward_no_answer else False,
+                "destination": forward_no_answer if forward_no_answer else "",
+                "numberOfRings": int(float(num_rings)) if forward_no_answer else 3
+            }
+        }
+    }
+    
+    # Add businessContinuity if Column Q has value
+    if forward_disconnect:
+        data["businessContinuity"] = {
+            "enabled": True,
+            "destination": forward_disconnect
+        }
+    
+    # Send PUT request
+    result = api.call("PUT", f"workspaces/{workspace_id}/features/callForwarding", 
+                     data=data, params={"orgId": api.org_id})
+    
+    if "error" in result:
+        return result['error']
+    
+    return None
+
+def process_bulk_import(api, location_data, filepath):
+    """Process bulk import of workspaces from Excel file"""
+    # Read Webex Users sheet
+    users_data = read_excel_sheet(filepath, 'Webex Users')
+    if not users_data or len(users_data) < 2:
+        print("Error: Could not read data")
+        return
+    
+    headers = users_data[0]
+    data_rows = users_data[1:]
+    
+    # Build preview table
+    print(f"\n{'='*80}")
+    print("Import Preview")
+    print(f"{'='*80}")
+    
+    users_count = 0
+    workspaces_count = 0
+    preview_items = []
+    
+    for row_idx, row in enumerate(data_rows, start=2):
+        user_type = str(row[9]).strip().lower() if len(row) > 9 else ""
+        display_name = str(row[12]).strip() if len(row) > 12 else "Unknown"  # Column M
+        extension = str(row[4]).strip() if len(row) > 4 else ""
+        phone_number = str(row[3]).strip() if len(row) > 3 and row[3] else ""
+        device_model = str(row[10]).strip() if len(row) > 10 else ""
+        
+        if user_type == 'user':
+            users_count += 1
+            preview_items.append({
+                'row': row_idx,
+                'type': 'User',
+                'name': display_name,
+                'ext': extension,
+                'phone': phone_number,
+                'device': device_model
+            })
+        else:
+            workspaces_count += 1
+            preview_items.append({
+                'row': row_idx,
+                'type': 'Workspace',
+                'name': display_name,
+                'ext': extension,
+                'phone': phone_number,
+                'device': device_model
+            })
+    
+    # Display table
+    print(f"{'Row':<5} {'Type':<10} {'Name':<25} {'Ext':<8} {'Phone':<12} {'Device':<20}")
+    print(f"{'-'*80}")
+    for item in preview_items:
+        print(f"{item['row']:<5} {item['type']:<10} {item['name']:<25} {item['ext']:<8} {item['phone']:<12} {item['device']:<20}")
+    
+    print(f"\n{'='*80}")
+    print(f"Total: {len(preview_items)} items ({users_count} users, {workspaces_count} workspaces)")
+    print(f"Note: Users will be skipped (not yet implemented)")
+    print(f"{'='*80}")
+    
+    # Confirm
+    confirm = input("\nProceed with import? (y/n): ").strip().lower()
+    if confirm != 'y':
+        print("Import cancelled.")
+        return
+    
+    # Process each row
+    print(f"\n{'='*60}")
+    print("Starting Bulk Import Process")
+    print(f"{'='*60}")
+    
+    results = {'users': 0, 'workspaces_created': 0, 'workspaces_failed': 0, 'errors': []}
+    workspace_map = {}
+    
+    for row_idx, row in enumerate(data_rows, start=2):
+        user_type = str(row[9]).strip().lower() if len(row) > 9 else ""
+        display_name = str(row[12]).strip() if len(row) > 12 else "Unknown"  # Column M
+        
+        if user_type == 'user':
+            results['users'] += 1
+            print(f"Row {row_idx}: Skipping user '{display_name}' (user provisioning not yet implemented)")
+            continue
+        
+        # Process non-user (workspace)
+        print(f"\nRow {row_idx}: Creating workspace '{display_name}'...")
+        workspace_id, error = create_workspace_from_row(api, location_data, row, headers)
+        
+        if workspace_id:
+            results['workspaces_created'] += 1
+            workspace_map[row_idx] = workspace_id
+            if error:
+                print(f"  Warning: {error}")
+                results['errors'].append(f"Row {row_idx}: {error}")
+            else:
+                print(f"  Success: Workspace created (ID: {workspace_id})")
+        else:
+            results['workspaces_failed'] += 1
+            print(f"  Failed: {error}")
+            results['errors'].append(f"Row {row_idx}: {error}")
+    
+    # Configure call forwarding
+    if workspace_map:
+        print(f"\n{'='*60}")
+        print("Configuring Call Forwarding & Business Continuity")
+        print(f"{'='*60}")
+        
+        for row_idx, workspace_id in workspace_map.items():
+            row = data_rows[row_idx - 2]
+            display_name = str(row[12]).strip() if len(row) > 12 else "Unknown"
+            
+            print(f"\nRow {row_idx}: Configuring '{display_name}'...")
+            error = configure_call_forwarding(api, workspace_id, row)
+            
+            if error:
+                print(f"  Warning: {error}")
+                results['errors'].append(f"Row {row_idx}: Call forwarding failed - {error}")
+            else:
+                print(f"  Success: Call forwarding configured")
+    
+    # Print summary
+    print(f"\n{'='*60}")
+    print("Bulk Import Summary")
+    print(f"{'='*60}")
+    print(f"Users skipped: {results['users']}")
+    print(f"Workspaces created: {results['workspaces_created']}")
+    print(f"Workspaces failed: {results['workspaces_failed']}")
+    
+    if results['errors']:
+        print(f"\nErrors/Warnings:")
+        for error in results['errors']:
+            print(f"  - {error}")
+    
+    if results['users'] > 0:
+        print(f"\nNote: User provisioning will be implemented in a future update.")
+    
+    print(f"{'='*60}")
+
 def aso_bulk_import_tool(api):
     """Main function for ASO Bulk Import Tool"""
     print("\n--- ASO Bulk Import Tool ---")
@@ -425,3 +667,6 @@ def aso_bulk_import_tool(api):
         return
     
     print("\nValidation complete. Ready for next steps.")
+    
+    # Process bulk import
+    process_bulk_import(api, location, filepath)
