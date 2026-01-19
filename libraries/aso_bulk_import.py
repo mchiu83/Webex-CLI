@@ -579,6 +579,115 @@ def configure_outgoing_permission(api, workspace_id, row):
     
     return None, True
 
+def configure_side_car_speed_dials(api, workspace_map, data_rows, filepath):
+    """Configure side car speed dials for devices"""
+    print(f"\n{'='*60}")
+    print("Configuring Side Car Speed Dials")
+    print(f"{'='*60}")
+    
+    # Read Webex Side Cars sheet
+    sidecar_data = read_excel_sheet(filepath, 'Webex Side Cars')
+    if not sidecar_data or len(sidecar_data) < 7:
+        print("  Skipped: No side car data found")
+        return
+    
+    # Get extensions from rows 4 and 5, column D (index 3)
+    target_extensions = []
+    for row_idx in [3, 4]:  # Row 4 and 5 (0-indexed)
+        if len(sidecar_data) > row_idx and len(sidecar_data[row_idx]) > 3:
+            ext = str(sidecar_data[row_idx][3]).strip() if sidecar_data[row_idx][3] else None
+            if ext:
+                target_extensions.append(ext)
+    
+    if not target_extensions:
+        print("  Skipped: No target extensions found in rows 4-5")
+        return
+    
+    # Build extension to workspace map
+    ext_to_workspace = {}
+    for row_idx, workspace_id in workspace_map.items():
+        row = data_rows[row_idx - 2]
+        extension = str(row[4]).strip() if len(row) > 4 else ""
+        if extension in target_extensions:
+            ext_to_workspace[extension] = workspace_id
+    
+    # Get device IDs for target workspaces
+    device_map = {}
+    for extension, workspace_id in ext_to_workspace.items():
+        print(f"\n  Fetching device for extension {extension}...")
+        devices_result = api.call("GET", f"telephony/config/workspaces/{workspace_id}/devices",
+                                 params={"orgId": api.org_id})
+        
+        if "error" in devices_result:
+            print(f"    Warning: Failed to fetch devices - {devices_result['error']}")
+            print(f"    Please manually configure side car for extension {extension}")
+            continue
+        
+        devices = devices_result.get('devices', [])
+        if devices:
+            device_id = devices[0].get('id')
+            device_map[extension] = device_id
+            print(f"    Found device ID: {device_id}")
+        else:
+            print(f"    Warning: No devices found")
+    
+    if not device_map:
+        print("\n  Skipped: No devices found for configuration")
+        return
+    
+    # Build speed dial array from rows 7-34, columns C and D
+    kem_keys = []
+    for row_idx in range(6, 34):  # Rows 7-34 (0-indexed 6-33)
+        if len(sidecar_data) <= row_idx:
+            break
+        
+        row = sidecar_data[row_idx]
+        label = str(row[2]).strip() if len(row) > 2 and row[2] else None
+        value = str(row[3]).strip() if len(row) > 3 and row[3] else None
+        
+        if label and value:
+            kem_keys.append({
+                "kemModuleIndex": 1,
+                "kemKeyIndex": len(kem_keys) + 1,
+                "kemKeyType": "SPEED_DIAL",
+                "kemKeyLabel": label,
+                "kemKeyValue": value
+            })
+    
+    if not kem_keys:
+        print("\n  Skipped: No speed dials found in rows 7-34")
+        return
+    
+    print(f"\n  Found {len(kem_keys)} speed dial entries")
+    
+    # Configure each device
+    for extension, device_id in device_map.items():
+        print(f"\n  Configuring device for extension {extension}...")
+        
+        layout_data = {
+            "layoutMode": "CUSTOM",
+            "userReorderEnabled": False,
+            "lineKeys": [
+                {"lineKeyIndex": 1, "lineKeyType": "PRIMARY_LINE"},
+                {"lineKeyIndex": 2, "lineKeyType": "OPEN"},
+                {"lineKeyIndex": 3, "lineKeyType": "OPEN"},
+                {"lineKeyIndex": 4, "lineKeyType": "OPEN"},
+                {"lineKeyIndex": 5, "lineKeyType": "OPEN"},
+                {"lineKeyIndex": 6, "lineKeyType": "OPEN"}
+            ],
+            "kemModuleType": "KEM_20_KEYS",
+            "kemKeys": kem_keys
+        }
+        
+        result = api.call("PUT", f"telephony/config/devices/{device_id}/layout",
+                         data=layout_data, params={"orgId": api.org_id})
+        
+        if "error" in result:
+            print(f"    Warning: Failed to configure - {result['error']}")
+            print(f"    Please manually configure side car for extension {extension}")
+        else:
+            print(f"    Success: Side car speed dials configured")
+
 def process_bulk_import(api, location_data, filepath):
     """Process bulk import of workspaces from Excel file"""
     # Read Webex Users sheet
@@ -718,6 +827,16 @@ def process_bulk_import(api, location_data, filepath):
                     print(f"  Success: Custom outgoing permissions configured")
             else:
                 print(f"  Skipped: No custom permissions required")
+    
+    # Configure side car speed dials
+    if workspace_map:
+        print(f"\n{'='*60}")
+        proceed = input("\nProceed with side car speed dial configuration? (Y/n): ").strip().lower()
+        if proceed in ['', 'y', 'yes']:
+            configure_side_car_speed_dials(api, workspace_map, data_rows, filepath)
+        else:
+            print("\nSide car configuration skipped. Workflow complete.")
+            return
     
     # Print summary
     print(f"\n{'='*60}")
