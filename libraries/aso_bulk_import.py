@@ -751,8 +751,8 @@ def process_bulk_import(api, location_data, filepath):
     print(f"{'='*80}")
     
     # Confirm
-    confirm = input("\nProceed with import? (y/n): ").strip().lower()
-    if confirm != 'y':
+    confirm = input("\nProceed with import? (Y/n): ").strip().lower()
+    if confirm not in ['', 'y', 'yes']:
         print("Import cancelled.")
         return
     
@@ -838,8 +838,12 @@ def process_bulk_import(api, location_data, filepath):
         if proceed in ['', 'y', 'yes']:
             configure_side_car_speed_dials(api, workspace_map, data_rows, filepath)
         else:
-            print("\nSide car configuration skipped. Workflow complete.")
-            return
+            print("\nSide car configuration skipped.")
+    
+    # Configure hunt groups
+    if workspace_map:
+        from libraries.configure_hunt_groups import configure_hunt_groups
+        configure_hunt_groups(api, location_data, workspace_map, data_rows, filepath)
     
     # Print summary
     print(f"\n{'='*60}")

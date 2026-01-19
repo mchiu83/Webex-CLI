@@ -250,7 +250,7 @@ Enterprise bulk provisioning tool for large-scale workspace deployments.
 - Displays table of all items to be imported
 - Shows: Row, Type, Name, Extension, Phone, Device
 - Counts users vs workspaces
-- Requires user confirmation to proceed
+- Requires user confirmation to proceed (default: Yes, press Enter)
 
 **Workspace Creation Phase**:
 - Skips rows with User Type = "user" (not yet implemented)
@@ -281,6 +281,43 @@ Enterprise bulk provisioning tool for large-scale workspace deployments.
   - All others: BLOCK without transfer
 - Skips if Column S is empty or not "custom"
 - Shows status for each workspace
+
+**Side Car Configuration Phase**:
+- Prompts user to proceed (default: Yes, press Enter)
+- Reads "Webex Side Cars" sheet from Excel
+- Extracts target extensions from rows 4-5, column D
+- Builds speed dial array from rows 7-34, columns C-D
+- Configures device layout with:
+  - Custom layout mode
+  - 6 line keys (first as PRIMARY_LINE, rest OPEN)
+  - KEM_20_KEYS module type
+  - Speed dial entries with labels and values
+- Applies configuration to all devices matching target extensions
+- Shows success/warning for each device
+
+**Hunt Group Configuration Phase**:
+- Prompts user to proceed (default: Yes, press Enter)
+- Reads "Webex Hunt Groups" sheet from Excel
+- Fetches location timezone from Webex API
+- Parses hunt groups in 3-row blocks starting at row 4:
+  - Column A: Hunt group name
+  - Column B: Phone number (optional, skips "N/A")
+  - Column C: Extension
+  - Column D: Agent extensions (up to 3 per hunt group)
+  - Column F: Call policy (default: REGULAR)
+  - Column G: Next agent rings (default: 3)
+- Maps agent extensions to workspace IDs from created workspaces
+- Removes trailing digits from name for customName field
+- Displays configuration table for each hunt group
+- Asks user to confirm proceeding with each hunt group
+- Allows user to modify attributes (name, extension, phoneNumber, policy, nextAgentRings)
+- Creates hunt group via POST API with:
+  - Extension and phoneNumber as numeric values (not strings)
+  - Call policies (policy, waitingEnabled=false, noAnswer settings)
+  - Agents array with workspace IDs
+  - Hunt group caller ID settings
+  - Direct line caller ID with CUSTOM_NAME selection
+- Shows success message or error details for each hunt group
 
 **Summary**:
 - Total users skipped
