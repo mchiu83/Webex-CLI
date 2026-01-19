@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Ming Chiu
+# Licensed under the MIT License - see LICENSE file for details
+
 import os
 import sys
 import logging

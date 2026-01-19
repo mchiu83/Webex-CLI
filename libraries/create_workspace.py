@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Ming Chiu
+# Licensed under the MIT License - see LICENSE file for details
+
 from libraries.add_device import add_workspace_devices
 
 def create_workspace(api):

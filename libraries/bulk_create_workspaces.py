@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Ming Chiu
+# Licensed under the MIT License - see LICENSE file for details
+
 import csv
 import os
 import re

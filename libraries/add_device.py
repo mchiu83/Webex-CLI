@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Ming Chiu
+# Licensed under the MIT License - see LICENSE file for details
+
 PHONE_MODELS = [
     "Cisco 6821", "Cisco 6841", "Cisco 6851", "Cisco 6861",
     "Cisco 6861 Wi-Fi", "Cisco 6871", "Cisco 6871",
