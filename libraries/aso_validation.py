@@ -332,3 +332,284 @@ def validate_available_numbers(api, location_data, filepath, read_excel_sheet):
     
     print(f"  Status: PASS - All phone numbers are available")
     return True
+
+def validate_translation_pattern(api, location_data, filepath, read_excel_sheet, additional_tabs):
+    """Validation 6: Validate organization translation pattern"""
+    import re
+    
+    print(f"\nValidation 6: Validating organization translation pattern...")
+    
+    # Find location-specific tab
+    location_name = location_data['name']
+    location_tab = None
+    
+    for tab in additional_tabs:
+        if tab.lower() == location_name.lower():
+            location_tab = tab
+            break
+    
+    if not location_tab:
+        print(f"  Status: FAILED - Location tab '{location_name}' not found in additional tabs")
+        print(f"  Available tabs: {', '.join(additional_tabs)}")
+        input("  Press Enter to acknowledge and continue...")
+        return {}
+    
+    print(f"  Found location tab: {location_tab}")
+    
+    # Read location tab
+    location_data_sheet = read_excel_sheet(filepath, location_tab)
+    if not location_data_sheet or len(location_data_sheet) < 65:
+        print(f"  Status: FAILED - Could not read location tab or insufficient rows")
+        input("  Press Enter to acknowledge and continue...")
+        return {}
+    
+    # Extract translation pattern data from B62, B63, B64 (column index 1, rows 61-63)
+    translation_name = str(location_data_sheet[61][1]).strip() if len(location_data_sheet[61]) > 1 and location_data_sheet[61][1] else ""
+    matching_pattern = str(location_data_sheet[62][1]).strip() if len(location_data_sheet[62]) > 1 and location_data_sheet[62][1] else ""
+    replacement_pattern = str(location_data_sheet[63][1]).strip() if len(location_data_sheet[63]) > 1 and location_data_sheet[63][1] else ""
+    
+    if not translation_name or not matching_pattern or not replacement_pattern:
+        print(f"  Status: WARNING - Translation pattern data missing in location tab")
+        print(f"    B62 (Name): {'[MISSING]' if not translation_name else translation_name}")
+        print(f"    B63 (Matching Pattern): {'[MISSING]' if not matching_pattern else matching_pattern}")
+        print(f"    B64 (Replacement Pattern): {'[MISSING]' if not replacement_pattern else replacement_pattern}")
+        print(f"  Please fix the translation pattern data in Excel tab '{location_tab}'")
+        input("  Press Enter to acknowledge and continue...")
+        return {}
+    
+    # Display translation pattern table
+    print(f"\n  Translation Pattern Information:")
+    print(f"  {'Field':<20} {'Value':<40}")
+    print(f"  {'-'*60}")
+    print(f"  {'Name':<20} {translation_name:<40}")
+    print(f"  {'Matching Pattern':<20} {matching_pattern:<40}")
+    print(f"  {'Replacement Pattern':<20} {replacement_pattern:<40}")
+    
+    # Query existing translation patterns
+    print(f"\n  Checking for existing translation pattern...")
+    result = api.call("GET", "telephony/config/callRouting/translationPatterns",
+                     params={"orgId": api.org_id, "matchingPattern": matching_pattern})
+    
+    if "error" in result:
+        print(f"  Status: FAILED - Error fetching translation patterns: {result['error']}")
+        input("  Press Enter to continue...")
+        return {}
+    
+    translation_patterns = result.get('translationPatterns', [])
+    
+    if translation_patterns:
+        # Check if matching pattern matches
+        found_pattern = translation_patterns[0]
+        if found_pattern.get('matchingPattern') == matching_pattern:
+            print(f"  Status: PASS - Translation pattern exists")
+            print(f"  Pattern ID: {found_pattern.get('id')}")
+            print(f"  Pattern Name: {found_pattern.get('name')}")
+            input("\n  Press Enter to proceed to next step...")
+            return {'id': found_pattern.get('id'), 'name': found_pattern.get('name')}
+        else:
+            print(f"  Status: WARNING - Translation pattern found but matching pattern differs")
+            print(f"  Expected: {matching_pattern}")
+            print(f"  Found: {found_pattern.get('matchingPattern')}")
+            input("  Press Enter to acknowledge and continue...")
+            return {}
+    
+    # Translation pattern does not exist, ask to create
+    print(f"  Status: NOT FOUND - Translation pattern does not exist")
+    create = input("  Create translation pattern? (Y/n): ").strip().lower()
+    
+    if create not in ['', 'y', 'yes']:
+        print("\n  Translation pattern creation skipped.")
+        print("  Please manually create the translation pattern in Control Hub.")
+        input("  Press Enter to acknowledge and continue...")
+        return {}
+    
+    # Clean up replacement pattern (remove dashes, spaces, keep only digits)
+    replacement_clean = re.sub(r'[^0-9]', '', replacement_pattern)
+    if len(replacement_clean) != 10:
+        print(f"  Status: WARNING - Replacement pattern should be 10 digits, got {len(replacement_clean)} digits")
+        print(f"  Original: {replacement_pattern}")
+        print(f"  Cleaned: {replacement_clean}")
+        proceed = input("  Proceed with cleaned value? (y/n): ").strip().lower()
+        if proceed != 'y':
+            print("  Translation pattern creation cancelled.")
+            input("  Press Enter to continue...")
+            return {}
+    
+    # Create translation pattern
+    print(f"\n  Creating translation pattern...")
+    create_data = {
+        "name": translation_name,
+        "matchingPattern": matching_pattern,
+        "replacementPattern": replacement_clean
+    }
+    
+    create_result = api.call("POST", "telephony/config/callRouting/translationPatterns",
+                            data=create_data, params={"orgId": api.org_id})
+    
+    if "error" in create_result:
+        print(f"  Status: FAILED - Error creating translation pattern: {create_result['error']}")
+        print(f"  Please manually create the translation pattern in Control Hub.")
+        input("  Press Enter to acknowledge and continue...")
+        return {}
+    
+    pattern_id = create_result.get('id')
+    print(f"  Status: SUCCESS - Translation pattern created")
+    print(f"  Pattern ID: {pattern_id}")
+    print(f"  Pattern Name: {translation_name}")
+    
+    input("\n  Press Enter to proceed to next step...")
+    return {'id': pattern_id, 'name': translation_name}
+
+def validate_call_park_extensions(api, location_data, filepath, read_excel_sheet, additional_tabs):
+    """Validation 7: Validate call park extensions"""
+    import re
+    
+    print(f"\nValidation 7: Validating call park extensions...")
+    
+    # Find location-specific tab
+    location_name = location_data['name']
+    location_tab = None
+    
+    for tab in additional_tabs:
+        if tab.lower() == location_name.lower():
+            location_tab = tab
+            break
+    
+    if not location_tab:
+        print(f"  Status: FAILED - Location tab '{location_name}' not found")
+        input("  Press Enter to acknowledge and continue...")
+        return {}
+    
+    # Read location tab
+    location_data_sheet = read_excel_sheet(filepath, location_tab)
+    if not location_data_sheet or len(location_data_sheet) < 46:
+        print(f"  Status: FAILED - Could not read location tab or insufficient rows")
+        input("  Press Enter to acknowledge and continue...")
+        return {}
+    
+    # Extract call park data from B44, B45, C45 (column indices 1, 1, 2, rows 43, 44, 44)
+    park_location = str(location_data_sheet[43][1]).strip() if len(location_data_sheet[43]) > 1 and location_data_sheet[43][1] else ""
+    park_name_b45 = str(location_data_sheet[44][1]).strip() if len(location_data_sheet[44]) > 1 and location_data_sheet[44][1] else ""
+    park_name_c45 = str(location_data_sheet[44][2]).strip() if len(location_data_sheet[44]) > 2 and location_data_sheet[44][2] else ""
+    
+    if not park_location or not park_name_b45 or not park_name_c45:
+        print(f"  Status: WARNING - Call park data missing in location tab")
+        print(f"    B44 (Location): {'[MISSING]' if not park_location else park_location}")
+        print(f"    B45: {'[MISSING]' if not park_name_b45 else park_name_b45}")
+        print(f"    C45: {'[MISSING]' if not park_name_c45 else park_name_c45}")
+        input("  Press Enter to acknowledge and continue...")
+        return {}
+    
+    # Verify location matches
+    if park_location.lower() != location_name.lower():
+        print(f"  Status: WARNING - Call park location '{park_location}' does not match inferred location '{location_name}'")
+        input("  Press Enter to acknowledge and continue...")
+        return {}
+    
+    # Combine B45 and C45 to get full range
+    park_range = f"{park_name_b45} {park_name_c45}"
+    print(f"  Call park range: {park_range}")
+    
+    # Parse range: "<Location> Park <ext#> thru <Location> Park <ext#>"
+    # Extract start and end extension numbers
+    match = re.search(r'Park (\d+) thru .* Park (\d+)', park_range)
+    if not match:
+        print(f"  Status: FAILED - Could not parse call park range format")
+        print(f"  Expected format: '<Location> Park <ext#> thru <Location> Park <ext#>'")
+        input("  Press Enter to acknowledge and continue...")
+        return {}
+    
+    start_ext = int(match.group(1))
+    end_ext = int(match.group(2))
+    
+    # Build list of required call park extensions
+    required_parks = []
+    for ext_num in range(start_ext, end_ext + 1):
+        park_name = f"{location_name} Park {ext_num:02d}"
+        park_ext = f"{ext_num:02d}"
+        required_parks.append({
+            'name': park_name,
+            'extension': park_ext,
+            'locationId': location_data['id']
+        })
+    
+    print(f"  Required call park extensions: {len(required_parks)}")
+    
+    # Fetch existing call park extensions
+    print(f"\n  Fetching existing call park extensions...")
+    result = api.call("GET", "telephony/config/callParkExtensions",
+                     params={"orgId": api.org_id, "locationId": location_data['id']})
+    
+    if "error" in result:
+        print(f"  Status: FAILED - Error fetching call park extensions: {result['error']}")
+        print(f"  Please manually check call park extensions in Control Hub.")
+        input("  Press Enter to acknowledge and continue...")
+        return {}
+    
+    existing_parks = result.get('callParkExtensions', [])
+    print(f"  Found {len(existing_parks)} existing call park extensions")
+    
+    # Remove existing parks from required list
+    to_create = []
+    for park in required_parks:
+        exists = False
+        for existing in existing_parks:
+            if existing.get('name') == park['name'] or existing.get('extension') == park['extension']:
+                exists = True
+                break
+        if not exists:
+            to_create.append(park)
+    
+    if not to_create:
+        print(f"\n  Status: PASS - All required call park extensions already exist")
+        input("  Press Enter to proceed to next step...")
+        return {'created': 0}
+    
+    # Display table of call park extensions to create
+    print(f"\n  Call park extensions to create:")
+    print(f"  {'Name':<30} {'Extension':<10}")
+    print(f"  {'-'*40}")
+    for park in to_create:
+        print(f"  {park['name']:<30} {park['extension']:<10}")
+    
+    create = input(f"\n  Create {len(to_create)} call park extension(s)? (Y/n): ").strip().lower()
+    
+    if create not in ['', 'y', 'yes']:
+        print("\n  Call park extension creation skipped.")
+        print("  Please manually create these call park extensions in Control Hub.")
+        input("  Press Enter to acknowledge and continue...")
+        return {'created': 0}
+    
+    # Create call park extensions
+    print(f"\n  Creating call park extensions...")
+    created_count = 0
+    created_ids = []
+    
+    for park in to_create:
+        print(f"\n  Creating '{park['name']}' (ext: {park['extension']})...")
+        
+        create_data = {
+            "name": park['name'],
+            "extension": park['extension']
+        }
+        
+        create_result = api.call("POST", f"telephony/config/locations/{location_data['id']}/callParkExtensions",
+                                data=create_data, params={"orgId": api.org_id})
+        
+        if "error" in create_result:
+            print(f"    Status: FAILED - {create_result['error']}")
+            print(f"    Please manually create this call park extension in Control Hub.")
+        else:
+            park_id = create_result.get('id')
+            created_count += 1
+            created_ids.append(park_id)
+            print(f"    Status: SUCCESS - Call park extension created (ID: {park_id})")
+    
+    print(f"\n  Created {created_count} of {len(to_create)} call park extensions")
+    
+    if created_count < len(to_create):
+        print(f"  Some call park extensions failed to create.")
+        print(f"  Please manually check Control Hub.")
+    
+    proceed = input("\n  Press Enter to proceed to next step...")
+    return {'created': created_count, 'ids': created_ids}

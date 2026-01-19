@@ -221,7 +221,9 @@ def aso_bulk_import_tool(api):
         validate_excel_file,
         validate_location,
         validate_webex_users_data,
-        validate_available_numbers
+        validate_available_numbers,
+        validate_translation_pattern,
+        validate_call_park_extensions
     )
     from libraries.schedule_manager import validate_and_create_schedules
     
@@ -271,6 +273,10 @@ def aso_bulk_import_tool(api):
     if not validate_available_numbers(api, location, filepath, read_excel_sheet):
         print("\nValidation failed. Returning to previous menu.")
         return
+    
+    translation_pattern = validate_translation_pattern(api, location, filepath, read_excel_sheet, additional_tabs)
+    
+    call_park_extensions = validate_call_park_extensions(api, location, filepath, read_excel_sheet, additional_tabs)
     
     schedule_ids = validate_and_create_schedules(api, location['id'], filepath)
     
