@@ -102,13 +102,14 @@ class WebexCLI:
                         print("Invalid selection.")
                         self.org_id = input("Enter Organization ID: ").strip()
     
-    def display_menu(self, title: str, options: List[str]) -> str:
+    def display_menu(self, title: str, options: List[str], show_back: bool = True) -> str:
         print(f"\n{'='*60}")
         print(f"{title}")
         print(f"{'='*60}")
         for i, option in enumerate(options, 1):
             print(f"{i}. {option}")
-        print("/b. Back")
+        if show_back:
+            print("/b. Back")
         print(f"{'='*60}")
         
         choice = input("Enter choice: ").strip()
@@ -163,7 +164,8 @@ class WebexCLI:
                     "Workspace Management",
                     "ASO Bulk Import Tool",
                     "Exit"
-                ]
+                ],
+                show_back=False
             )
             
             if choice == "/b" or choice == "3":
