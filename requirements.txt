@@ -1,3 +1,9 @@
-requests==2.31.0
-openpyxl==3.1.2
-xlrd==2.0.1
+# These packages are bundled in vendor/ and do not need to be pip-installed.
+# Listed here for reference only.
+#
+# requests==2.31.0
+# openpyxl==3.1.2
+# xlrd==2.0.1
+#
+# requests dependencies (also vendored):
+#   urllib3, certifi, charset_normalizer, idna

@@ -1,378 +1,251 @@
 # Webex Control Hub CLI
 
-A Python CLI application for managing Webex Control Hub Cloud Calling API, specifically for workspace management.
+A Python CLI tool for bulk provisioning Webex Calling locations via the Webex Control Hub APIs. Designed around an Excel-based import workflow (ASO Bulk Import) that handles the full lifecycle of a store/location setup.
 
 ## Features
 
-- List workspaces
-- View detailed workspace information
-- Create workspaces with Webex Calling features
-- Update workspaces and their configurations
-- Delete workspaces
-- Add and manage calling devices (Cisco Phones and Collaboration Devices)
-- Bulk create workspaces from CSV file
-- ASO Bulk Import Tool for Excel-based workspace provisioning
-- Session-specific logging for all actions and API calls
-- Menu-driven interface with back navigation (/b)
-- Modular code structure for easy maintenance
+- **ASO Bulk Import** — full end-to-end provisioning from a single Excel file:
+  - Workspace creation with Webex Calling (extension + DID)
+  - Device provisioning via MAC address
+  - Call forwarding (no answer, business continuity)
+  - Outgoing calling permissions
+  - Side car / KEM speed dial layout
+  - Hunt group creation
+  - Auto attendant creation (with audio announcement upload)
+  - Call park extension pre-validation
+  - Call park group creation
+  - Business hours schedule creation (`24-7`, `8-5NBD`)
+  - Translation pattern pre-validation
+- **Reset Store** — tear down and re-provision an existing location (workspaces, hunt groups, auto attendants, announcements, call park groups/extensions)
+- Dual session logging: CLI transcript + raw API call log
+- Menu-driven interface with `/b` back navigation
+
+## Requirements
+
+- Python 3.10+
+- Windows OS
+- Valid Webex API token with full admin permissions
+- Organization ID (auto-detected if only one org is available)
 
 ## Installation
 
-1. Install dependencies:
+No dependencies to install. All required libraries (`requests`, `openpyxl`, `xlrd`, and their dependencies) are bundled in the `vendor/` folder.
+
 ```bash
-pip install -r requirements.txt
+python webex.py
 ```
+
+## Getting Your Webex Bearer Token
+
+The CLI authenticates using a personal access token from the Webex Developer Portal.
+
+1. Go to [https://developer.webex.com](https://developer.webex.com) and sign in with your Webex admin account
+2. Click your profile avatar in the top-right corner
+3. Your **personal access token** is displayed — click **Copy** to copy it to the clipboard
+
+> This token is valid for **12 hours**. After it expires, return to the developer portal and copy a fresh one.
+
+For long-lived automation, a Webex integration or service account token with a longer TTL is recommended — but for day-to-day use the personal token is sufficient.
 
 ## Configuration
 
-### Option 1: Credentials File (Recommended)
-Create a file named `credentials.priv` in the same directory as the script:
+Create `credentials.priv` in the project root:
+
 ```
 token=<your_webex_api_token>
 orgid=<your_organization_id>
 ```
 
-### Option 2: Manual Entry
-If `credentials.priv` is not found:
-- The script will prompt you for your API token
-- If orgid is not provided, it will fetch and display available organizations for selection
+If the file is missing, the CLI will prompt for the token and auto-select the org (or let you pick from a list if multiple exist).
+
+> `credentials.priv` is excluded from version control via `.gitignore`. Never commit it.
 
 ## Usage
 
-Run the application:
 ```bash
 python webex.py
 ```
 
-### Navigation
-- Enter the number corresponding to your choice
-- Type `/b` to go back to the previous menu
-- Follow on-screen prompts for each operation
+### Main Menu
 
-### Workspace Operations
-
-#### List Workspaces
-Displays all workspaces in your organization with their IDs.
-
-#### View Workspace Details
-Shows detailed information including:
-- Basic workspace information
-- Calling configuration
-- Associated devices
-
-#### Create Workspace
-Prompts for:
-- Display name (required)
-- Capacity (optional)
-- Type (notSet/focus/huddle/meetingRoom/open/desk/other)
-- Supported device type (Cisco Phones or Collaboration Devices)
-- Optional: Enable Webex Calling (location, extension, phone number)
-- Optional: Add devices via activation code or MAC address
-
-#### Update Workspace
-Allows updating:
-- Basic workspace properties
-- Calling configuration
-- Device associations
-
-#### Delete Workspace
-Removes a workspace after confirmation.
-
-#### Bulk Create Workspaces
-Create multiple workspaces from a CSV file:
-- Place `workspaces.csv` in the `bulk/` folder
-- CSV columns: id, location, displayName, supportedDevices, type, capacity, calling, extension, phoneNumber, phoneModel, macaddress
-- Comprehensive validation before execution
-- Preview and confirm before creating
-- Detailed results summary
-
-#### ASO Bulk Import Tool
-Enterprise-grade bulk provisioning from Excel files:
-- Place Excel file with prefix `aso_import` in the `bulk/` folder
-- Supports both .xlsx and .xls formats
-- Multi-step validation process:
-  1. Validates required tabs (Webex Users, Webex Side Cars, Webex Auto Attendant, Webex Hunt Groups)
-  2. Checks for additional location-specific tabs
-  3. Infers and validates location from Webex Users sheet
-  4. Validates location outgoing calling permissions (with optional auto-correction)
-  5. Validates all data fields (mandatory columns, MAC addresses, phone numbers)
-  6. Verifies phone number availability in location
-- Preview table before import with confirmation prompt
-- Automated workspace provisioning:
-  - Creates workspaces with Webex Calling enabled
-  - Provisions devices via MAC address
-  - Configures call forwarding (no answer, business continuity)
-  - Sets custom outgoing calling permissions
-- Skips user provisioning (future feature)
-- Comprehensive error reporting and status tracking
-
-### Device Provisioning
-
-When adding devices to workspaces, you can choose:
-
-**Cisco Phones** (35+ models supported):
-- 6800 Series, 7800 Series, 8800 Series, 9800 Series
-- IP DECT Series, Conference Phones
-- ATAs and VG Gateways
-
-**Collaboration Devices** (25+ models supported):
-- Webex Desk Series, Board Series, Room Series
-- Room Kits, Codec Plus/Pro
-
-**Provisioning Methods**:
-1. **Activation Code**: Generate code for manual device registration
-2. **MAC Address**: Direct provisioning with device MAC address
-   - Accepts various formats (with/without colons, dashes, spaces)
-   - Validates and confirms before creation
-
-## Bulk Operations
-
-### CSV Bulk Create
-
-Place your `workspaces.csv` file in the `bulk/` folder with these columns:
-
-| Column | Required | Description | Valid Values |
-|--------|----------|-------------|--------------|
-| id | No | Auto-generated after creation | Leave empty |
-| location | Optional* | Location name | Must match existing location |
-| displayName | Yes | Workspace name | Any string |
-| supportedDevices | No | Device type | "phones" or "collaborationDevices" (default) |
-| type | No | Workspace type | notSet/focus/huddle/meetingRoom/open/desk/other |
-| capacity | No | Room capacity | Number |
-| calling | No | Calling type | "none" (default) or "webexCalling" |
-| extension | Conditional | Extension number | 4+ digits (required if calling=webexCalling) |
-| phoneNumber | No | Phone number | 10 digits |
-| phoneModel | No | Device model | Must match PHONE_MODELS or COLLAB_MODELS |
-| macaddress | No | Device MAC | 12 alphanumeric characters (no separators) |
-
-*Location is required if calling=webexCalling, otherwise prompted during execution
-
-**Example CSV:**
-```csv
-id,location,displayName,supportedDevices,type,capacity,calling,extension,phoneNumber,phoneModel,macaddress
-,Main Office,Conference Room 1,phones,meetingRoom,10,webexCalling,4001,5551234567,Cisco 8841,
-,Main Office,Huddle Space A,collaborationDevices,huddle,4,webexCalling,4002,,Cisco Webex Desk,
-,,Open Workspace 1,phones,open,20,none,,,,,
+```
+1. ASO Bulk Import Tool (All in One)
+2. Reset Store
+3. Exit
 ```
 
-### Validation Rules
+---
 
-- **CSV Structure**: Validates headers and field counts
-- **displayName**: Mandatory, cannot be empty
-- **supportedDevices**: Must be "phones" or "collaborationDevices"
-- **calling**: Must be "none" or "webexCalling"
-- **extension**: Required for webexCalling, minimum 4 digits, numbers only
-- **phoneNumber**: Optional, must be exactly 10 digits
-- **phoneModel**: Must match device type (phones vs collaboration devices)
-- **macaddress**: Must be 12 alphanumeric characters without separators
+## ASO Bulk Import Tool
 
-All validation errors are reported with specific row numbers before any execution.
+The primary workflow. Reads an Excel file from the `bulk/` folder and provisions a location top-to-bottom.
 
-### ASO Bulk Import (Excel)
+### Excel File
 
-Enterprise bulk provisioning tool for large-scale workspace deployments.
+- Filename must start with `aso_import` (e.g. `aso_import_store0387.xlsx`)
+- Place the file in the `bulk/` folder
+- Supports `.xlsx` and `.xls`
 
-#### Excel File Requirements
+**Required sheets:**
+- `Webex Users`
+- `Webex Side Cars`
+- `Webex Auto Attendant`
+- `Webex Hunt Groups`
+- At least one location-specific tab (named after the location)
 
-**File Naming**: Must start with `aso_import` (e.g., `aso_import_site1.xlsx`)
+### Validation Phase
 
-**Required Tabs**:
-- Webex Users
-- Webex Side Cars
-- Webex Auto Attendant
-- Webex Hunt Groups
-- At least one additional location-specific tab
+Before any provisioning, the tool runs these checks in order:
 
-**Webex Users Sheet Columns** (A-S):
+| Step | What it checks |
+|------|---------------|
+| 1 | Required tabs exist; at least one location tab present |
+| 2 | Location name from `Webex Users` sheet matches a Webex telephony location |
+| 3 | Mandatory columns (C, E, H, J, K, L, M) are populated; MAC/extension/phone formats are valid |
+| 4 | Phone numbers in column D exist in the location's available number pool |
+| 5 | Translation pattern for the location exists (warns if missing) |
+| 6 | Call park extensions match what's defined in the location tab (warns if missing) |
+| 7 | Business hours schedules (`24-7`, `8-5NBD`) exist — offers to create them if not |
 
-| Column | Name | Required | Description | Valid Values |
-|--------|------|----------|-------------|-------------|
-| A | - | Optional | - | - |
-| B | - | Optional | - | - |
-| C | - | Yes | - | - |
-| D | Phone Number | Optional | 10-digit phone number | Must be available in location |
-| E | Extension | Yes | Extension number | Numeric, validated |
-| F | - | Optional | - | - |
-| G | - | Optional | - | - |
-| H | - | Yes | - | - |
-| I | - | Optional | - | - |
-| J | User Type | Yes | User or workspace | "user" or "non-user" |
-| K | Device Model | Yes | Phone model | Must match PHONE_MODELS or COLLAB_MODELS |
-| L | MAC Address | Yes | Device MAC | 12 hex characters (any format) |
-| M | Display Name | Yes | Workspace name | Used as workspace displayName |
-| N | Forward No Answer | Optional | Forward destination | Phone number for unanswered calls |
-| O | Rings Before Forward | Optional | Number of rings | Numeric, max 15 (default: 3) |
-| P | - | Optional | - | "yes" or "no" |
-| Q | Business Continuity | Optional | Forward destination | Phone number for network disconnect |
-| R | - | Optional | - | "yes" or "no" |
-| S | Calling Permission | Optional | Permission type | "custom" to apply restrictions |
+### Webex Users Sheet Columns
 
-#### Validation Process
+| Col | Field | Required | Notes |
+|-----|-------|----------|-------|
+| D | Phone Number | Optional | 10-digit DID; must be available in location |
+| E | Extension | Yes | Numeric |
+| H | Location Name | Yes | Used to resolve the Webex location |
+| J | User Type | Yes | `user` (skipped) or `non-user` (workspace) |
+| K | Device Model | Yes | Must match a supported Cisco phone model |
+| L | MAC Address | Yes | Any format — colons, dashes, plain hex all accepted |
+| M | Display Name | Yes | Workspace display name |
+| N | Forward No Answer | Optional | Destination phone number |
+| O | Rings Before Forward | Optional | Numeric, max 15 (default: 3) |
+| P | Forward No Answer Enabled | Optional | `yes` / `no` |
+| Q | Business Continuity | Optional | Destination phone number |
+| R | Business Continuity Enabled | Optional | `yes` / `no` |
+| S | Calling Permission | Optional | `custom` to apply restricted outgoing permissions |
 
-**Step 1: Tab Validation**
-- Verifies all required tabs exist
-- Confirms at least one additional location tab
+### Provisioning Steps (All in One)
 
-**Step 2: Location Validation**
-- Infers location from "Location Name" column in Webex Users sheet
-- Matches against Webex telephony locations (case-insensitive)
-- Displays location ID and calling line ID
+After validation passes, the tool runs each phase in sequence, prompting before each one:
 
-**Step 3: Location Outgoing Permissions Check**
-- Fetches current location outgoing calling permissions
-- Displays permissions table with all call types
-- Validates against expected configuration:
-  - INTERNAL_CALL: ALLOW with transfer enabled
-  - All others: BLOCK with transfer disabled
-  - Ignores: CASUAL, URL_DIALING, UNKNOWN
-- Prompts to auto-correct if mismatches found
-- Continues workflow regardless of user choice
+1. **Workspace Import** — creates workspaces, provisions devices, configures call forwarding and outgoing permissions
+2. **Side Car Speed Dials** — configures KEM/side car button layouts from the `Webex Side Cars` sheet
+3. **Hunt Groups** — creates hunt groups from the `Webex Hunt Groups` sheet; lets you review and edit each one before creation
+4. **Auto Attendants** — creates auto attendants from the `Webex Auto Attendant` sheet, uploads WAV announcements, wires menus
+5. **Call Park Group** — creates (or updates) the call park group from the location tab, using all non-Paging workspaces as members and all call park extensions as destinations
 
-**Step 4: Data Validation**
-- Mandatory columns (C, E, H, J, K, L, M) must have values
-- MAC addresses: 12 hexadecimal characters, no duplicates
-- User Type (J): Must be "user" or "non-user"
-- Extension (E): Must be numeric
-- Phone Number (D): Must be 10 digits or empty
-- Rings (O): Must be numeric and ≤15
-- Yes/No fields (P, R): Must be "yes", "no", or empty
-- Forward numbers (N, Q): Must be numeric or empty
+Each phase can be skipped individually.
 
-**Step 5: Phone Number Availability**
-- Fetches available PSTN numbers from location
-- Filters for unassigned, non-main, ACTIVE numbers
-- Validates Column D numbers exist in available pool
-- Converts 10-digit to E.164 format (+1XXXXXXXXXX)
+### Running Individual Phases
 
-#### Import Process
+The bootstrap and individual phase runners are also accessible from `webex.py` as standalone methods (not exposed in the main menu, but callable directly for development/debugging):
 
-**Preview Phase**:
-- Displays table of all items to be imported
-- Shows: Row, Type, Name, Extension, Phone, Device
-- Counts users vs workspaces
-- Requires user confirmation to proceed (default: Yes, press Enter)
+| Method | What it runs |
+|--------|-------------|
+| `_run_workspace_import()` | Workspace + device + forwarding + permissions only |
+| `_run_sidecar_import()` | Side car speed dials only |
+| `_run_huntgroup_import()` | Hunt groups only |
+| `_run_call_handler_import()` | Auto attendants only |
 
-**Workspace Creation Phase**:
-- Skips rows with User Type = "user" (not yet implemented)
-- Creates workspaces with:
-  - Display name from Column M
-  - Extension from Column E
-  - Phone number from Column D (if populated)
-  - Location from validated location
-  - Webex Calling always enabled
-- Provisions device via MAC address (Column L)
-- Uses device model from Column K
-- Tracks workspace IDs for subsequent configuration
+---
 
-**Call Forwarding Configuration Phase**:
-- Configures for each created workspace
-- No Answer forwarding (Column N):
-  - Destination: Column N value
-  - Rings: Column O value (default: 3)
-  - Always includes callForwarding structure
-- Business Continuity (Column Q):
-  - Enabled if Column Q has value
-  - Destination: Column Q value
+## Reset Store
 
-**Outgoing Permissions Configuration Phase**:
-- Applies custom permissions if Column S = "custom"
-- Configuration:
-  - INTERNAL_CALL, TOLL_FREE, NATIONAL: ALLOW with transfer
-  - All others: BLOCK without transfer
-- Skips if Column S is empty or not "custom"
-- Shows status for each workspace
+Tears down an existing location's provisioned resources and re-provisions from the Excel file. Uses a lighter validation pass (file + location only — skips number availability checks).
 
-**Side Car Configuration Phase**:
-- Prompts user to proceed (default: Yes, press Enter)
-- Reads "Webex Side Cars" sheet from Excel
-- Extracts target extensions from rows 4-5, column D
-- Builds speed dial array from rows 7-34, columns C-D
-- Configures device layout with:
-  - Custom layout mode
-  - 6 line keys (first as PRIMARY_LINE, rest OPEN)
-  - KEM_20_KEYS module type
-  - Speed dial entries with labels and values
-- Applies configuration to all devices matching target extensions
-- Shows success/warning for each device
+Resources deleted/reset (with confirmation at each step):
+- Workspaces
+- Hunt groups
+- Auto attendants
+- Location announcements
+- Call park groups
+- Call park extensions
 
-**Hunt Group Configuration Phase**:
-- Prompts user to proceed (default: Yes, press Enter)
-- Reads "Webex Hunt Groups" sheet from Excel
-- Fetches location timezone from Webex API
-- Parses hunt groups in 3-row blocks starting at row 4:
-  - Column A: Hunt group name
-  - Column B: Phone number (optional, skips "N/A")
-  - Column C: Extension
-  - Column D: Agent extensions (up to 3 per hunt group)
-  - Column F: Call policy (default: REGULAR)
-  - Column G: Next agent rings (default: 3)
-- Maps agent extensions to workspace IDs from created workspaces
-- Removes trailing digits from name for customName field
-- Displays configuration table for each hunt group
-- Asks user to confirm proceeding with each hunt group
-- Allows user to modify attributes (name, extension, phoneNumber, policy, nextAgentRings)
-- Creates hunt group via POST API with:
-  - Extension and phoneNumber as numeric values (not strings)
-  - Call policies (policy, waitingEnabled=false, noAnswer settings)
-  - Agents array with workspace IDs
-  - Hunt group caller ID settings
-  - Direct line caller ID with CUSTOM_NAME selection
-- Shows success message or error details for each hunt group
+---
 
-**Summary**:
-- Total users skipped
-- Workspaces created/failed
-- Detailed error/warning list
-- Note about future user provisioning
+## Auto Attendant Details
+
+The `Webex Auto Attendant` sheet defines up to four AA blocks. For each:
+
+- **Phone number / extension** read from column D of the AA header row
+- **Business hours schedule** read from the schedule map (columns J/K, rows 23–29); must be `24-7` or `8-5NBD`
+- **Greeting audio** matched by name from the greeting map (column M, rows 5–8); WAV files are uploaded to the location if not already present
+- **Key configurations** support: `Transfer to Number`, `Transfer to Sub Menu`, `Repeat Menu`
+- **After-hours menu** mirrors the business hours menu
+
+If a phone number is already assigned elsewhere (API error 4201), the tool prompts for a fallback extension rather than failing silently.
+
+---
+
+## Schedule Management
+
+Schedules are validated and auto-created during the ASO bootstrap. Two templates are supported:
+
+| Name | Description |
+|------|-------------|
+| `24-7` | All 7 days, all day |
+| `8-5NBD` | Monday–Friday, 08:00–17:00 |
+
+Schedule names are read from the `Webex Auto Attendant` sheet (column J, rows 23–29). If a required schedule doesn't exist in the location, the tool offers to create it.
+
+---
 
 ## Project Structure
 
 ```
-Webex-CLI/
-├── webex.py                 # Main entry point
-├── credentials.priv         # API credentials (not in git)
-├── requirements.txt         # Python dependencies
-├── logs/                    # Session logs
-│   ├── webexapi_*.log      # CLI output transcript
-│   └── api_calls_*.log     # API call details
-├── bulk/                    # Bulk operation files
-│   ├── workspaces.csv      # CSV bulk create input
-│   ├── workspaces.csv.example  # CSV template
-│   └── aso_import*.xlsx    # Excel bulk import files
-└── libraries/               # Modular functions
-    ├── api_client.py       # API client wrapper
-    ├── list_workspaces.py  # List function
-    ├── view_workspace.py   # View details function
-    ├── create_workspace.py # Create function
-    ├── update_workspace.py # Update function
-    ├── delete_workspace.py # Delete function
-    ├── add_device.py       # Device provisioning
-    ├── bulk_create_workspaces.py  # CSV bulk operations
-    └── aso_bulk_import.py  # Excel bulk import tool
+├── webex.py                          # Entry point and main menu
+├── credentials.priv                  # API credentials (gitignored)
+├── credentials.priv.example          # Credentials template
+├── requirements.txt                  # Reference only — no install needed
+├── vendor/                           # Bundled third-party libraries (no pip required)
+│   ├── requests/                     # HTTP client
+│   ├── urllib3/                      # requests dependency
+│   ├── certifi/                      # requests dependency
+│   ├── charset_normalizer/           # requests dependency
+│   ├── idna/                         # requests dependency
+│   ├── openpyxl/                     # .xlsx reader/writer
+│   └── xlrd/                         # .xls reader
+├── bulk/                             # Import files go here
+│   ├── aso_import*.xlsx              # ASO import Excel files
+│   └── backup/                       # Archived/previous import files
+├── logs/                             # Auto-created per session
+│   ├── clisession_YYYYMMDD_HHMMSS.log   # Full CLI transcript
+│   └── api_calls_YYYYMMDD_HHMMSS.log    # Raw API requests + responses
+└── libraries/
+    ├── api_client.py                 # Thin requests wrapper (WebexAPI)
+    ├── aso_bulk_import.py            # File selection, Excel reading, workspace import
+    ├── aso_validation.py             # All pre-flight validation steps
+    ├── workspace_config.py           # Call forwarding, permissions, side car config
+    ├── configure_hunt_groups.py      # Hunt group creation
+    ├── configure_auto_attendant.py   # Auto attendant creation + audio upload
+    ├── configure_call_park_group.py  # Call park group creation/update
+    ├── schedule_manager.py           # Schedule validation and creation
+    ├── reset_store.py                # Location teardown
+    ├── add_device.py                 # Device provisioning helpers
+    ├── bulk_create_workspaces.py     # Legacy CSV bulk create (not in main menu)
+    ├── create_workspace.py           # Single workspace creation (not in main menu)
+    ├── update_workspace.py           # Single workspace update (not in main menu)
+    ├── delete_workspace.py           # Single workspace delete (not in main menu)
+    ├── list_workspaces.py            # List workspaces (not in main menu)
+    └── view_workspace.py             # View workspace details (not in main menu)
 ```
 
 ## Logging
 
-All actions and API calls are logged to separate files in the `logs/` folder:
-- `webexapi_YYYYMMDD_HHMMSS.log` - Complete CLI output/session transcript
-- `api_calls_YYYYMMDD_HHMMSS.log` - All API calls to Webex Control Hub with timestamps, requests, and responses
+Every session writes two log files to `logs/`:
 
-## API Reference
+- `clisession_YYYYMMDD_HHMMSS.log` — everything printed to the terminal
+- `api_calls_YYYYMMDD_HHMMSS.log` — every API call with URL, params, request body, response status, and response body
 
-This application uses the Webex Calling Provisioning APIs:
-https://github.com/webex/postman-webex-calling/blob/master/provisioning-api/webex-calling-provisioning-apis.json
-
-## Requirements
-
-- Python 3.6+
-- Windows OS
-- Valid Webex API token with appropriate permissions
-- Organization ID (or will be auto-selected)
+Logs may contain phone numbers, extensions, MAC addresses, and API tokens. Handle accordingly.
 
 ## Security Notes
 
-- Keep `credentials.priv` secure and never commit it to version control
-- Add `credentials.priv` to `.gitignore`
-- API tokens should have minimal required permissions
-- Logs may contain sensitive information - handle appropriately
-- Bulk CSV files may contain phone numbers and extensions - protect accordingly
+- Never commit `credentials.priv`
+- API tokens grant full admin access — rotate them if exposed
+- Log files contain full API responses including sensitive data — restrict access to the `logs/` folder
+
+## License
+
+Copyright (c) 2026 Ming Chiu. Licensed under the MIT License.

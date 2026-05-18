@@ -4,18 +4,20 @@
 
 import os
 import sys
+
+# ---------------------------------------------------------------------------
+# Vendor path — add bundled third-party packages so no pip install is needed
+# ---------------------------------------------------------------------------
+_vendor_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor")
+if _vendor_path not in sys.path:
+    sys.path.insert(0, _vendor_path)
+
 import logging
 from datetime import datetime
 from typing import List
 
 from libraries.api_client import WebexAPI
-from libraries.list_workspaces import list_workspaces
-from libraries.view_workspace import view_workspace_details
-from libraries.create_workspace import create_workspace
-from libraries.update_workspace import update_workspace
-from libraries.delete_workspace import delete_workspace
-from libraries.bulk_create_workspaces import bulk_create_workspaces
-from libraries.aso_bulk_import import aso_bulk_import_tool
+from libraries.aso_bulk_import import aso_bulk_import_tool, select_import_file, read_excel_sheet, process_bulk_import
 
 class TeeOutput:
     def __init__(self, *files):
@@ -77,7 +79,6 @@ class WebexCLI:
             self.token = input("Enter Webex API Token: ").strip()
         
         if not self.org_id:
-            # Create temporary API client for org lookup
             temp_api = WebexAPI(self.token, None, self.api_logger)
             orgs_result = temp_api.call("GET", "organizations")
             if "error" in orgs_result:
@@ -111,47 +112,213 @@ class WebexCLI:
         if show_back:
             print("/b. Back")
         print(f"{'='*60}")
-        
         choice = input("Enter choice: ").strip()
         return choice
-    
-    def workspace_menu(self):
-        while True:
-            choice = self.display_menu(
-                "Workspace Management",
-                [
-                    "List Workspaces",
-                    "View Workspace Details",
-                    "Create Workspace",
-                    "Update Workspace",
-                    "Delete Workspace",
-                    "Bulk Create Workspaces"
-                ]
-            )
-            
-            if choice == "/b":
-                break
-            elif choice == "1":
-                list_workspaces(self.api)
-                input("\nPress Enter to continue...")
-            elif choice == "2":
-                view_workspace_details(self.api)
-                input("\nPress Enter to continue...")
-            elif choice == "3":
-                create_workspace(self.api)
-                input("\nPress Enter to continue...")
-            elif choice == "4":
-                update_workspace(self.api)
-                input("\nPress Enter to continue...")
-            elif choice == "5":
-                delete_workspace(self.api)
-                input("\nPress Enter to continue...")
-            elif choice == "6":
-                bulk_create_workspaces(self.api)
-                input("\nPress Enter to continue...")
+
+    # ------------------------------------------------------------------
+    # Shared bootstrap: locate file + run validations + resolve location
+    # Returns (filepath, location_data, additional_tabs) or None on failure
+    # ------------------------------------------------------------------
+    def _aso_bootstrap(self):
+        from libraries.aso_validation import (
+            validate_excel_file,
+            validate_location,
+            validate_webex_users_data,
+            validate_available_numbers,
+            validate_translation_pattern,
+            validate_call_park_extensions
+        )
+        from libraries.schedule_manager import validate_and_create_schedules
+
+        if not os.path.exists('bulk'):
+            print("Status: FAILED - 'bulk' folder not found")
+            os.makedirs('bulk')
+            print("Please place your 'aso_import' Excel file in the 'bulk' folder and try again.")
+            return None
+
+        print("\nSearching for valid import files in bulk folder...")
+        filepath = select_import_file()
+
+        if not filepath:
+            print("Status: FAILED - No valid import file selected.")
+            return None
+
+        print(f"Status: PASS - Using file: {filepath}")
+
+        is_valid, additional_tabs = validate_excel_file(filepath)
+        if not is_valid:
+            print("\nValidation failed. Please fix the issues and try again.")
+            return None
+
+        if additional_tabs:
+            print(f"\nAdditional tabs detected and cached:")
+            for i, tab in enumerate(additional_tabs, 1):
+                print(f"  {i}. {tab}")
+
+        location = validate_location(self.api, filepath, read_excel_sheet)
+        if not location:
+            print("\nValidation failed. Returning to menu.")
+            return None
+
+        if not validate_webex_users_data(filepath, read_excel_sheet):
+            print("\nValidation failed. Returning to menu.")
+            return None
+
+        if not validate_available_numbers(self.api, location, filepath, read_excel_sheet):
+            print("\nValidation failed. Returning to menu.")
+            return None
+
+        validate_translation_pattern(self.api, location, filepath, read_excel_sheet, additional_tabs)
+        validate_call_park_extensions(self.api, location, filepath, read_excel_sheet, additional_tabs)
+        validate_and_create_schedules(self.api, location['id'], filepath)
+
+        print("\nValidation complete.")
+        return filepath, location, additional_tabs
+
+    # ------------------------------------------------------------------
+    # Lightweight bootstrap for Reset Store — only needs file + location,
+    # skips number availability and other validations
+    # ------------------------------------------------------------------
+    def _reset_bootstrap(self):
+        from libraries.aso_validation import validate_excel_file, validate_location
+
+        if not os.path.exists('bulk'):
+            print("Status: FAILED - 'bulk' folder not found")
+            return None
+
+        print("\nSearching for valid import files in bulk folder...")
+        filepath = select_import_file()
+        if not filepath:
+            print("Status: FAILED - No valid import file selected.")
+            return None
+
+        print(f"Status: PASS - Using file: {filepath}")
+
+        is_valid, additional_tabs = validate_excel_file(filepath)
+        if not is_valid:
+            print("\nValidation failed. Please fix the issues and try again.")
+            return None
+
+        location = validate_location(self.api, filepath, read_excel_sheet)
+        if not location:
+            print("\nCould not resolve location. Returning to menu.")
+            return None
+
+        return filepath, location
+
+    # ------------------------------------------------------------------
+    # Option 2: Reset Store
+    # ------------------------------------------------------------------
+    def _run_reset_store(self):
+        from libraries.reset_store import reset_store
+
+        result = self._reset_bootstrap()
+        if not result:
+            return
+        filepath, location = result
+
+        reset_store(self.api, location, filepath, read_excel_sheet)
+
+    # ------------------------------------------------------------------
+    # Standalone: Workspace Import only
+    # ------------------------------------------------------------------
+    def _run_workspace_import(self):
+        result = self._aso_bootstrap()
+        if not result:
+            return
+        filepath, location, _ = result
+        process_bulk_import(self.api, location, filepath)
+
+    # ------------------------------------------------------------------
+    # Standalone: Side Car Speed Dials Import only
+    # ------------------------------------------------------------------
+    def _run_sidecar_import(self):
+        from libraries.workspace_config import configure_side_car_speed_dials
+
+        result = self._aso_bootstrap()
+        if not result:
+            return
+        filepath, location, _ = result
+
+        workspace_map, data_rows = self._build_workspace_map(filepath, location)
+        if workspace_map is None:
+            return
+
+        configure_side_car_speed_dials(self.api, workspace_map, data_rows, filepath, read_excel_sheet)
+
+    # ------------------------------------------------------------------
+    # Standalone: Hunt Group Import only
+    # ------------------------------------------------------------------
+    def _run_huntgroup_import(self):
+        from libraries.configure_hunt_groups import configure_hunt_groups
+
+        result = self._aso_bootstrap()
+        if not result:
+            return
+        filepath, location, _ = result
+
+        workspace_map, data_rows = self._build_workspace_map(filepath, location)
+        if workspace_map is None:
+            return
+
+        configure_hunt_groups(self.api, location, workspace_map, data_rows, filepath)
+
+    # ------------------------------------------------------------------
+    # Standalone: Auto Attendant Import only
+    # ------------------------------------------------------------------
+    def _run_call_handler_import(self):
+        from libraries.configure_auto_attendant import configure_auto_attendants
+
+        result = self._aso_bootstrap()
+        if not result:
+            return
+        filepath, location, _ = result
+
+        configure_auto_attendants(self.api, location, filepath, read_excel_sheet)
+
+    # ------------------------------------------------------------------
+    # Helper: resolve extension -> workspace ID map from Control Hub
+    # ------------------------------------------------------------------
+    def _build_workspace_map(self, filepath, location):
+        users_data = read_excel_sheet(filepath, 'Webex Users')
+        if not users_data or len(users_data) < 2:
+            print("Error: Could not read Webex Users sheet.")
+            return None, None
+
+        data_rows = users_data[1:]
+
+        print(f"\nFetching existing workspaces for location '{location['name']}'...")
+        ws_result = self.api.call(
+            "GET", "workspaces",
+            params={"orgId": self.api.org_id, "locationId": location['id'], "max": 1000}
+        )
+        if "error" in ws_result:
+            print(f"Error fetching workspaces: {ws_result['error']}")
+            return None, None
+
+        name_to_id = {
+            ws.get('displayName', '').strip(): ws.get('id')
+            for ws in ws_result.get('items', [])
+        }
+
+        workspace_map = {}
+        for row_idx, row in enumerate(data_rows, start=2):
+            user_type = str(row[9]).strip().lower() if len(row) > 9 else ""
+            if user_type == 'user':
+                continue
+            display_name = str(row[12]).strip() if len(row) > 12 else ""
+            if display_name in name_to_id:
+                workspace_map[row_idx] = name_to_id[display_name]
             else:
-                print("Invalid choice. Please try again.")
-    
+                print(f"  Warning: Row {row_idx} - workspace '{display_name}' not found in Control Hub, skipping.")
+
+        if not workspace_map:
+            print("No matching workspaces found. Ensure workspaces have been imported first.")
+            return None, None
+
+        print(f"Resolved {len(workspace_map)} workspace(s).")
+        return workspace_map, data_rows
+
     def main_menu(self):
         print(f"\nWelcome to Webex Control Hub CLI")
         print(f"Organization ID: {self.org_id}")
@@ -161,8 +328,8 @@ class WebexCLI:
             choice = self.display_menu(
                 "Main Menu",
                 [
-                    "Workspace Management",
-                    "ASO Bulk Import Tool",
+                    "ASO Bulk Import Tool (All in One)",
+                    "Reset Store",
                     "Exit"
                 ],
                 show_back=False
@@ -174,9 +341,10 @@ class WebexCLI:
                 self.cleanup()
                 break
             elif choice == "1":
-                self.workspace_menu()
-            elif choice == "2":
                 aso_bulk_import_tool(self.api)
+                input("\nPress Enter to continue...")
+            elif choice == "2":
+                self._run_reset_store()
                 input("\nPress Enter to continue...")
             else:
                 print("Invalid choice. Please try again.")

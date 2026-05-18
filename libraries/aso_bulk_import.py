@@ -23,6 +23,115 @@ def find_aso_import_file():
     
     return None
 
+
+def _is_valid_import_file(filepath: str) -> tuple:
+    """
+    Check if an Excel file is a valid bulk import file.
+    Criteria:
+      - Has tabs: Webex Users, Webex Side Cars, Webex Auto Attendant, Webex Hunt Groups
+      - First sheet A1 contains store location info (newline-separated address)
+    Returns (is_valid: bool, address_lines: list[str])
+    """
+    required_tabs = ['Webex Users', 'Webex Side Cars', 'Webex Auto Attendant', 'Webex Hunt Groups']
+    try:
+        import warnings
+        warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
+        if filepath.endswith('.xlsx'):
+            wb = openpyxl.load_workbook(filepath, read_only=True, data_only=True)
+            sheet_names = wb.sheetnames
+            if not all(tab in sheet_names for tab in required_tabs):
+                wb.close()
+                return False, []
+            first_ws = wb[sheet_names[0]]
+            a1 = None
+            for row in first_ws.iter_rows(min_row=1, max_row=1, min_col=1, max_col=1, values_only=True):
+                a1 = row[0]
+            wb.close()
+        elif filepath.endswith('.xls'):
+            wb = xlrd.open_workbook(filepath)
+            sheet_names = wb.sheet_names()
+            if not all(tab in sheet_names for tab in required_tabs):
+                return False, []
+            first_ws = wb.sheet_by_index(0)
+            a1 = first_ws.cell_value(0, 0) if first_ws.nrows > 0 else None
+        else:
+            return False, []
+
+        if not a1:
+            return False, []
+        lines = [l.strip() for l in str(a1).split('\n') if l.strip()]
+        if not lines:
+            return False, []
+        return True, lines
+
+    except Exception:
+        return False, []
+
+
+def select_import_file() -> str | None:
+    """
+    Scan the /bulk folder for valid import files, present a formatted table,
+    and return the selected filepath. Returns None if none found or cancelled.
+    """
+    bulk_dir = 'bulk'
+    if not os.path.exists(bulk_dir):
+        return None
+
+    candidates = []
+    for pattern in [os.path.join(bulk_dir, '*.xlsx'), os.path.join(bulk_dir, '*.xls')]:
+        for f in sorted(glob.glob(pattern)):
+            if os.path.basename(f).startswith('~$'):
+                continue
+            is_valid, address_lines = _is_valid_import_file(f)
+            if is_valid:
+                candidates.append((f, address_lines))
+
+    if not candidates:
+        print("  No valid import files found in /bulk folder.")
+        print("  A valid file must contain tabs: Webex Users, Webex Side Cars, Webex Auto Attendant, Webex Hunt Groups")
+        return None
+
+    if len(candidates) == 1:
+        filepath, address_lines = candidates[0]
+        print(f"  Found 1 valid import file: {os.path.basename(filepath)}")
+        if address_lines:
+            print(f"  Store: {address_lines[0]}")
+        return filepath
+
+    # Multiple files - present formatted table
+    col_num_w  = 1
+    col_file_w = max(len(os.path.basename(f)) for f, _ in candidates)
+    col_addr_w = max((max(len(ln) for ln in addr) if addr else 0) for _, addr in candidates)
+    col_addr_w = max(col_addr_w, len("Store Information"))
+    col_file_w = max(col_file_w, len("File Name"))
+
+    sep = f"  +{chr(45)*(col_num_w+2)}+{chr(45)*(col_file_w+2)}+{chr(45)*(col_addr_w+2)}+"
+
+    print(f"\n{sep}")
+    print("  | " + "#".ljust(col_num_w) + " | " + "File Name".ljust(col_file_w) + " | " + "Store Information".ljust(col_addr_w) + " |")
+    print(f"{sep}")
+
+    for i, (filepath, address_lines) in enumerate(candidates, 1):
+        filename = os.path.basename(filepath)
+        first_line = address_lines[0] if address_lines else ""
+        print("  | " + str(i).ljust(col_num_w) + " | " + filename.ljust(col_file_w) + " | " + first_line.ljust(col_addr_w) + " |")
+        for line in address_lines[1:]:
+            print("  | " + "".ljust(col_num_w) + " | " + "".ljust(col_file_w) + " | " + line.ljust(col_addr_w) + " |")
+        if i < len(candidates):
+            print(f"{sep}")
+
+    print(f"{sep}")
+
+    while True:
+        choice = input(f"\n  Select file (1-{len(candidates)}): ").strip()
+        try:
+            idx = int(choice) - 1
+            if 0 <= idx < len(candidates):
+                return candidates[idx][0]
+        except ValueError:
+            pass
+        print(f"  Invalid selection. Please enter a number between 1 and {len(candidates)}.")
+
 def read_excel_sheet(filepath, sheet_name):
     """Read data from specific Excel sheet"""
     try:
@@ -46,6 +155,64 @@ def read_excel_sheet(filepath, sheet_name):
     except Exception as e:
         print(f"Error reading sheet '{sheet_name}': {str(e)}")
         return None
+
+def check_mac_conflicts(api, preview_items):
+    """
+    Validate MAC addresses against Control Hub using the validateMacs endpoint.
+    Returns True if all MACs are clean, False if any conflicts are found.
+    """
+    import re
+
+    # Collect MACs from workspace rows only (users don't get devices)
+    mac_map = {}  # formatted_mac -> row number
+    for item in preview_items:
+        if item['type'] == 'Workspace' and item['mac']:
+            mac_raw = item['mac']
+            mac_clean = re.sub(r'[-:\s]', '', mac_raw).upper()
+            if re.match(r'^[0-9A-F]{12}$', mac_clean):
+                mac_formatted = ':'.join(mac_clean[i:i+2] for i in range(0, 12, 2))
+                mac_map[mac_formatted] = item['row']
+
+    if not mac_map:
+        return True
+
+    print(f"\nChecking {len(mac_map)} MAC address(es) against Control Hub...")
+
+    result = api.call(
+        "POST",
+        "telephony/config/devices/actions/validateMacs/invoke",
+        data={"macs": list(mac_map.keys())}
+    )
+
+    if "error" in result:
+        print(f"  Warning: MAC validation API call failed ({result['error']}) - skipping conflict check")
+        return True
+
+    mac_info = result.get("macs", [])
+    conflicts = []
+
+    for entry in mac_info:
+        mac = entry.get("mac", "")
+        status = entry.get("state", "")
+        message = entry.get("message", "")
+        row = mac_map.get(mac, "?")
+
+        if status == "available":
+            print(f"  Row {row}: {mac} - OK")
+        else:
+            # Any non-available state (e.g. "duplicate", "invalid") is a conflict
+            print(f"  Row {row}: {mac} - CONFLICT ({message or status})")
+            conflicts.append((row, mac, message or status))
+
+    if conflicts:
+        print(f"\n{'='*97}")
+        print(f"MAC Conflict Check FAILED - {len(conflicts)} conflict(s) found. Resolve before importing.")
+        print(f"{'='*97}")
+        return False
+
+    print(f"  MAC conflict check passed - all addresses are available.")
+    return True
+
 
 def process_bulk_import(api, location_data, filepath):
     """Process bulk import of workspaces from Excel file"""
@@ -78,6 +245,7 @@ def process_bulk_import(api, location_data, filepath):
         extension = str(row[4]).strip() if len(row) > 4 else ""
         phone_number = str(row[3]).strip() if len(row) > 3 and row[3] else ""
         device_model = str(row[10]).strip() if len(row) > 10 else ""
+        mac_address = str(row[11]).strip() if len(row) > 11 and row[11] else ""
         
         if user_type == 'user':
             users_count += 1
@@ -87,7 +255,8 @@ def process_bulk_import(api, location_data, filepath):
                 'name': display_name,
                 'ext': extension,
                 'phone': phone_number,
-                'device': device_model
+                'device': device_model,
+                'mac': mac_address
             })
         else:
             workspaces_count += 1
@@ -97,19 +266,23 @@ def process_bulk_import(api, location_data, filepath):
                 'name': display_name,
                 'ext': extension,
                 'phone': phone_number,
-                'device': device_model
+                'device': device_model,
+                'mac': mac_address
             })
     
-    print(f"{'Row':<5} {'Type':<10} {'Name':<25} {'Ext':<8} {'Phone':<12} {'Device':<20}")
-    print(f"{'-'*80}")
+    print(f"{'Row':<5} {'Type':<10} {'Name':<25} {'Ext':<8} {'Phone':<12} {'Device':<20} {'MAC Address':<17}")
+    print(f"{'-'*97}")
     for item in preview_items:
-        print(f"{item['row']:<5} {item['type']:<10} {item['name']:<25} {item['ext']:<8} {item['phone']:<12} {item['device']:<20}")
+        print(f"{item['row']:<5} {item['type']:<10} {item['name']:<25} {item['ext']:<8} {item['phone']:<12} {item['device']:<20} {item['mac']:<17}")
     
-    print(f"\n{'='*80}")
+    print(f"\n{'='*97}")
     print(f"Total: {len(preview_items)} items ({users_count} users, {workspaces_count} workspaces)")
     print(f"Note: Users will be skipped (not yet implemented)")
-    print(f"{'='*80}")
-    
+    print(f"{'='*97}")
+
+    if not check_mac_conflicts(api, preview_items):
+        return
+
     confirm = input("\nProceed with import? (Y/n): ").strip().lower()
     if confirm not in ['', 'y', 'yes']:
         print("Import cancelled.")
@@ -197,7 +370,13 @@ def process_bulk_import(api, location_data, filepath):
     if workspace_map:
         from libraries.configure_hunt_groups import configure_hunt_groups
         configure_hunt_groups(api, location_data, workspace_map, data_rows, filepath)
-    
+
+    from libraries.configure_call_park_group import configure_call_park_group
+    configure_call_park_group(api, location_data, filepath, read_excel_sheet)
+
+    from libraries.configure_auto_attendant import configure_auto_attendants
+    configure_auto_attendants(api, location_data, filepath, read_excel_sheet)
+
     print(f"\n{'='*60}")
     print("Bulk Import Summary")
     print(f"{'='*60}")
@@ -229,25 +408,18 @@ def aso_bulk_import_tool(api):
     
     print("\n--- ASO Bulk Import Tool ---")
     
-    if not os.path.exists('bulk'):
-        print("Status: FAILED - 'bulk' folder not found")
-        print("Creating 'bulk' folder...")
-        os.makedirs('bulk')
-        print("Please place your 'aso_import' Excel file in the 'bulk' folder and try again.")
-        return
-    
-    print("\nSearching for 'aso_import' Excel file in bulk folder...")
-    filepath = find_aso_import_file()
+    print("\nSearching for valid import files in bulk folder...")
+    filepath = select_import_file()
     
     if not filepath:
-        print("Status: FAILED - No file found with prefix 'aso_import' (.xlsx or .xls)")
+        print("Status: FAILED - No valid import file selected.")
         print("\nPlease ensure your Excel file:")
-        print("  1. Has a filename starting with 'aso_import'")
-        print("  2. Is in Excel format (.xlsx or .xls)")
-        print("  3. Is located in the 'bulk' folder")
+        print("  1. Is in Excel format (.xlsx or .xls)")
+        print("  2. Is located in the 'bulk' folder")
+        print("  3. Contains tabs: Webex Users, Webex Side Cars, Webex Auto Attendant, Webex Hunt Groups")
         return
     
-    print(f"Status: PASS - Found file: {filepath}")
+    print(f"Status: PASS - Using file: {filepath}")
     
     is_valid, additional_tabs = validate_excel_file(filepath)
     

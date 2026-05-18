@@ -134,6 +134,41 @@ def configure_hunt_groups(api, location_data, workspace_map, data_rows, filepath
         print(f"  Agents: {len(agent_ids)}")
         print(f"  Custom Name: {custom_name}")
         
+        # Check for existing hunt group with the same name
+        existing_hg_id = None
+        list_result = api.call(
+            "GET",
+            f"telephony/config/huntGroups",
+            params={"orgId": api.org_id, "locationId": location_data['id'], "name": hg['name']}
+        )
+        if "error" not in list_result:
+            for existing in list_result.get("huntGroups", []):
+                if existing.get("name", "").strip().lower() == hg['name'].strip().lower():
+                    existing_hg_id = existing.get("id")
+                    break
+
+        if existing_hg_id:
+            print(f"\n  *** A hunt group named '{hg['name']}' already exists in Control Hub ***")
+            print(f"  Options:")
+            print(f"    D - Delete existing and recreate")
+            print(f"    S - Skip this hunt group")
+            choice = input("  Choice (D/S): ").strip().upper()
+            if choice != 'D':
+                print(f"  Skipped: Hunt group '{hg['name']}' left unchanged.")
+                continue
+            # Delete the existing hunt group
+            print(f"  Deleting existing hunt group...")
+            del_result = api.call(
+                "DELETE",
+                f"telephony/config/locations/{location_data['id']}/huntGroups/{existing_hg_id}",
+                params={"orgId": api.org_id}
+            )
+            if "error" in del_result:
+                print(f"  Error deleting hunt group: {del_result['error']}")
+                print(f"  Skipping recreation to avoid duplicates.")
+                continue
+            print(f"  Deleted successfully. Proceeding with recreation...")
+
         # Confirm
         confirm = input("\nProceed with this hunt group? (Y/n): ").strip().lower()
         if confirm not in ['', 'y', 'yes']:

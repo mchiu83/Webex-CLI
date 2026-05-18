@@ -3,7 +3,7 @@
 
 def list_workspaces(api):
     print("\n--- List Workspaces ---")
-    params = {"orgId": api.org_id}
+    params = {"orgId": api.org_id,"max": 100}
     result = api.call("GET", "workspaces", params=params)
     
     if "error" in result:
