@@ -75,6 +75,15 @@ python webex.py
 
 ---
 
+## Prerequisites
+
+Before running this tool, the following must already be in place in Webex Control Hub:
+
+- **Location created** — the target location must exist in Control Hub. This tool does not create locations.
+- **DIDs available** — all phone numbers (DIDs) to be assigned must already be provisioned to the location by your PSTN provider and visible in Control Hub under the location's number inventory.
+
+The tool will validate both of these during its pre-flight checks and will abort if the location cannot be found or if a requested DID is not in the available pool.
+
 ## ASO Bulk Import Tool
 
 The primary workflow. Reads an Excel file from the `bulk/` folder and provisions a location top-to-bottom.
