@@ -58,7 +58,6 @@ orgid=<your_organization_id>
 
 If the file is missing, the CLI will prompt for the token and auto-select the org (or let you pick from a list if multiple exist).
 
-> `credentials.priv` is excluded from version control via `.gitignore`. Never commit it.
 
 ## Usage
 
@@ -242,7 +241,6 @@ Logs may contain phone numbers, extensions, MAC addresses, and API tokens. Handl
 
 ## Security Notes
 
-- Never commit `credentials.priv`
 - API tokens grant full admin access — rotate them if exposed
 - Log files contain full API responses including sensitive data — restrict access to the `logs/` folder
 
