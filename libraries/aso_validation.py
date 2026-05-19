@@ -199,6 +199,72 @@ def validate_location(api, filepath, read_excel_sheet):
         'callingLineId': phone_number
     }
 
+def _is_fax_paging_row(row):
+    """
+    Return True if this row is a Fax or Paging workspace row.
+    Checks the Display Name (col M, index 12) for the words 'Fax' or 'Paging'.
+    """
+    display_name = str(row[12]).strip() if len(row) > 12 and row[12] else ""
+    name_lower = display_name.lower()
+    return 'fax' in name_lower or 'paging' in name_lower
+
+
+def find_fax_paging_pairs(data_rows):
+    """
+    Scan data_rows (0-indexed from row 2 in the sheet) and return a dict mapping
+    each row index (2-based) to its partner row index for Fax/Paging pairs.
+
+    A valid pair is any two rows (not necessarily consecutive) where:
+      - Both have device model 'Cisco 192'
+      - Both have a display name containing 'Fax' or 'Paging'
+      - Both share the same MAC address
+      - One contains 'Fax' and the other contains 'Paging'
+
+    Returns: dict of {row_idx: {'partner': partner_row_idx, 'role': 'fax'|'paging'}}
+             The Fax row is always the primary (port 1) and Paging is secondary (port 2).
+    """
+    # First pass: collect all Fax/Paging Cisco 192 candidates keyed by cleaned MAC
+    # mac_clean -> list of (row_idx, name_lower)
+    candidates = {}
+    for i, row in enumerate(data_rows):
+        row_idx = i + 2  # 2-based sheet row number
+        if not _is_fax_paging_row(row):
+            continue
+        device_model = str(row[10]).strip() if len(row) > 10 and row[10] else ""
+        if device_model != 'Cisco 192':
+            continue
+        mac_raw = str(row[11]).strip() if len(row) > 11 and row[11] else ""
+        mac_clean = re.sub(r'[-:\s]', '', mac_raw).upper()
+        if not mac_clean:
+            continue
+        name_lower = str(row[12]).strip().lower() if len(row) > 12 and row[12] else ""
+        candidates.setdefault(mac_clean, []).append((row_idx, name_lower))
+
+    # Second pass: for each MAC that has exactly one Fax and one Paging candidate, form a pair
+    pairs = {}
+    for mac_clean, entries in candidates.items():
+        if len(entries) != 2:
+            continue  # need exactly 2 rows sharing this MAC
+        (idx_a, name_a), (idx_b, name_b) = entries
+        has_fax_a = 'fax' in name_a
+        has_paging_a = 'paging' in name_a
+        has_fax_b = 'fax' in name_b
+        has_paging_b = 'paging' in name_b
+
+        if has_fax_a and has_paging_b:
+            fax_idx, paging_idx = idx_a, idx_b
+        elif has_paging_a and has_fax_b:
+            fax_idx, paging_idx = idx_b, idx_a
+        else:
+            # Both same keyword — treat lower row number as fax
+            fax_idx, paging_idx = (idx_a, idx_b) if idx_a < idx_b else (idx_b, idx_a)
+
+        pairs[fax_idx] = {'partner': paging_idx, 'role': 'fax'}
+        pairs[paging_idx] = {'partner': fax_idx, 'role': 'paging'}
+
+    return pairs
+
+
 def validate_webex_users_data(filepath, read_excel_sheet):
     """Validation 4: Validate Webex Users sheet data"""
     print(f"\nValidation 4: Validating Webex Users data...")
@@ -212,7 +278,15 @@ def validate_webex_users_data(filepath, read_excel_sheet):
     data_rows = users_data[1:]
     optional_cols = [0, 1, 3, 5, 6, 8, 13, 14, 15, 16, 17, 18]
     mac_addresses = []
-    
+
+    # Identify Fax/Paging pairs so we can allow their shared MAC
+    fax_paging_pairs = find_fax_paging_pairs(data_rows)
+    # Collect the MAC for each Fax row (primary) — Paging rows share the same MAC
+    # and will be excluded from the duplicate MAC check
+    fax_paging_paging_row_indices = {
+        row_idx for row_idx, info in fax_paging_pairs.items() if info['role'] == 'paging'
+    }
+
     for row_idx, row in enumerate(data_rows, start=2):
         for col_idx in range(min(19, len(headers))):
             if col_idx not in optional_cols:
@@ -231,7 +305,10 @@ def validate_webex_users_data(filepath, read_excel_sheet):
             print(f"  Status: FAILED - Row {row_idx}: Invalid MAC address format: '{mac_raw}'")
             return False
         
-        mac_addresses.append(mac_clean)
+        # Only add to duplicate-check list if this is NOT a Paging row in a Fax/Paging pair
+        # (the Paging row intentionally shares the Fax row's MAC for the same ATA 192 device)
+        if row_idx not in fax_paging_paging_row_indices:
+            mac_addresses.append(mac_clean)
         
         if len(row) <= 9 or not row[9]:
             print(f"  Status: FAILED - Row {row_idx}: Missing user type")
@@ -285,6 +362,14 @@ def validate_webex_users_data(filepath, read_excel_sheet):
         print(f"  Status: FAILED - Duplicate MAC addresses found: {', '.join(duplicates)}")
         return False
     
+    # Report any detected Fax/Paging ATA 192 pairs
+    if fax_paging_pairs:
+        fax_rows = [idx for idx, info in fax_paging_pairs.items() if info['role'] == 'fax']
+        print(f"  Note: Detected {len(fax_rows)} Fax/Paging ATA 192 pair(s) - will be provisioned as a single workspace")
+        for fax_idx in fax_rows:
+            paging_idx = fax_paging_pairs[fax_idx]['partner']
+            print(f"    Fax row {fax_idx} + Paging row {paging_idx} -> single Cisco 192 workspace")
+
     print(f"  Status: PASS - All {len(data_rows)} rows validated successfully")
     return True
 

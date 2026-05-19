@@ -4,8 +4,14 @@
 import re
 from libraries.add_device import PHONE_MODELS, COLLAB_MODELS
 
-def create_workspace_from_row(api, location_data, row, headers):
-    """Create workspace from Excel row data"""
+def create_workspace_from_row(api, location_data, row, headers, skip_device=False):
+    """Create workspace from Excel row data.
+
+    Args:
+        skip_device: If True, skip device registration (used for Fax workspace
+                     in a Fax/Paging ATA 192 pair — the device lives on the
+                     Paging workspace and Fax is added as a shared line after).
+    """
     display_name = str(row[12]).strip() if len(row) > 12 else ""
     phone_number = str(row[3]).strip() if len(row) > 3 and row[3] else None
     extension = str(row[4]).strip() if len(row) > 4 else ""
@@ -36,7 +42,7 @@ def create_workspace_from_row(api, location_data, row, headers):
     
     if phone_number and phone_number.isdigit() and len(phone_number) == 10:
         data["calling"]["webexCalling"]["phoneNumber"] = f"+1{phone_number}"
-    
+
     result = api.call("POST", "workspaces", data=data)
     
     if "error" in result:
@@ -44,7 +50,7 @@ def create_workspace_from_row(api, location_data, row, headers):
     
     workspace_id = result.get("id")
     
-    if workspace_id and mac_address and device_model:
+    if not skip_device and workspace_id and mac_address and device_model:
         mac_clean = re.sub(r'[-:\s]', '', mac_address).upper()
         mac_formatted = ':'.join(mac_clean[i:i+2] for i in range(0, 12, 2))
         
@@ -127,6 +133,58 @@ def configure_outgoing_permission(api, workspace_id, row):
         return result['error'], True
     
     return None, True
+
+def configure_ata_fax_line(api, paging_device_id, paging_workspace_id, fax_workspace_id):
+    """
+    Assign the Fax workspace as FXS port 2 on the Paging workspace's ATA 192 device.
+    Uses PUT /telephony/config/devices/{deviceId}/members with the full field set
+    required by the API (derived from GET response inspection).
+
+    Args:
+        paging_device_id:    Calling device ID of the ATA 192 (from the Paging workspace)
+        paging_workspace_id: Workspace ID of the Paging workspace (port 1, primaryOwner)
+        fax_workspace_id:    Workspace ID of the Fax workspace (port 2)
+    Returns:
+        error string on failure, None on success
+    """
+    data = {
+        "members": [
+            {
+                "id": paging_workspace_id,
+                "port": 1,
+                "primaryOwner": True,
+                "memberType": "PLACE",
+                "lineType": "PRIMARY",
+                "lineWeight": 1,
+                "hotlineEnabled": False,
+                "allowCallDeclineEnabled": True,
+                "t38FaxCompressionEnabled": False
+            },
+            {
+                "id": fax_workspace_id,
+                "port": 2,
+                "primaryOwner": False,
+                "memberType": "PLACE",
+                "lineType": "PRIMARY",
+                "lineWeight": 1,
+                "hotlineEnabled": False,
+                "allowCallDeclineEnabled": False,
+                "t38FaxCompressionEnabled": False
+            }
+        ]
+    }
+
+    result = api.call(
+        "PUT",
+        f"telephony/config/devices/{paging_device_id}/members",
+        data=data,
+        params={"orgId": api.org_id}
+    )
+
+    if "error" in result:
+        return result['error']
+    return None
+
 
 def configure_side_car_speed_dials(api, workspace_map, data_rows, filepath, read_excel_sheet):
     """Configure side car speed dials for devices"""

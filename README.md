@@ -7,6 +7,7 @@ A Python CLI tool for bulk provisioning Webex Calling locations via the Webex Co
 - **ASO Bulk Import** — full end-to-end provisioning from a single Excel file:
   - Workspace creation with Webex Calling (extension + DID)
   - Device provisioning via MAC address
+  - **Fax/Paging ATA 192 pair handling** — auto-detected from the `Webex Users` sheet; creates two workspaces (Paging as port 1, Fax as port 2) sharing one Cisco 192 device
   - Call forwarding (no answer, business continuity)
   - Outgoing calling permissions
   - Side car / KEM speed dial layout
@@ -109,7 +110,7 @@ Before any provisioning, the tool runs these checks in order:
 |------|---------------|
 | 1 | Required tabs exist; at least one location tab present |
 | 2 | Location name from `Webex Users` sheet matches a Webex telephony location |
-| 3 | Mandatory columns (C, E, H, J, K, L, M) are populated; MAC/extension/phone formats are valid |
+| 3 | Mandatory columns (C, E, H, J, K, L, M) are populated; MAC/extension/phone formats are valid. Fax/Paging ATA 192 pairs that share a MAC are detected and exempted from the duplicate MAC check |
 | 4 | Phone numbers in column D exist in the location's available number pool |
 | 5 | Translation pattern for the location exists (warns if missing) |
 | 6 | Call park extensions match what's defined in the location tab (warns if missing) |
@@ -133,11 +134,29 @@ Before any provisioning, the tool runs these checks in order:
 | R | Business Continuity Enabled | Optional | `yes` / `no` |
 | S | Calling Permission | Optional | `custom` to apply restricted outgoing permissions |
 
+### Fax / Paging ATA 192 Pairs
+
+The tool automatically detects Fax and Paging workspace rows that share a Cisco 192 device and provisions them as a single physical ATA 192 with two FXS ports.
+
+**Detection rules** — a pair is identified when two rows anywhere in the `Webex Users` sheet both:
+- Have `Cisco 192` as the device model
+- Share the same MAC address
+- Have a display name containing `Fax` or `Paging`
+
+**Provisioning sequence:**
+1. **Paging workspace** is created first with the shared MAC → registered as the primary owner of the Cisco 192 (FXS port 1)
+2. **Fax workspace** is created without a device (`skip_device=True`)
+3. After both workspaces exist, the tool calls `PUT /telephony/config/devices/{deviceId}/members` to assign the Fax workspace to FXS port 2
+
+The Paging row's MAC is excluded from the duplicate MAC validation check since sharing is intentional.
+
+**Call park group:** The Paging workspace is automatically excluded from call park group membership (consistent with existing behavior for paging-type workspaces).
+
 ### Provisioning Steps (All in One)
 
 After validation passes, the tool runs each phase in sequence, prompting before each one:
 
-1. **Workspace Import** — creates workspaces, provisions devices, configures call forwarding and outgoing permissions
+1. **Workspace Import** — creates workspaces, provisions devices, configures call forwarding and outgoing permissions. Fax/Paging ATA 192 pairs are handled with a dedicated FXS port 2 assignment step after all workspaces are created
 2. **Side Car Speed Dials** — configures KEM/side car button layouts from the `Webex Side Cars` sheet
 3. **Hunt Groups** — creates hunt groups from the `Webex Hunt Groups` sheet; lets you review and edit each one before creation
 4. **Auto Attendants** — creates auto attendants from the `Webex Auto Attendant` sheet, uploads WAV announcements, wires menus
@@ -222,15 +241,16 @@ Schedule names are read from the `Webex Auto Attendant` sheet (column J, rows 23
 │   └── api_calls_YYYYMMDD_HHMMSS.log    # Raw API requests + responses
 └── libraries/
     ├── api_client.py                 # Thin requests wrapper (WebexAPI)
-    ├── aso_bulk_import.py            # File selection, Excel reading, workspace import
-    ├── aso_validation.py             # All pre-flight validation steps
-    ├── workspace_config.py           # Call forwarding, permissions, side car config
+    ├── aso_bulk_import.py            # File selection, Excel reading, workspace import orchestration
+    ├── aso_validation.py             # All pre-flight validation steps + Fax/Paging pair detection
+    ├── workspace_config.py           # Workspace creation, call forwarding, permissions, side car,
+    │                                 #   and ATA 192 FXS port 2 assignment (configure_ata_fax_line)
     ├── configure_hunt_groups.py      # Hunt group creation
     ├── configure_auto_attendant.py   # Auto attendant creation + audio upload
     ├── configure_call_park_group.py  # Call park group creation/update
     ├── schedule_manager.py           # Schedule validation and creation
     ├── reset_store.py                # Location teardown
-    ├── add_device.py                 # Device provisioning helpers
+    ├── add_device.py                 # Device model lists and provisioning helpers
     ├── bulk_create_workspaces.py     # Legacy CSV bulk create (not in main menu)
     ├── create_workspace.py           # Single workspace creation (not in main menu)
     ├── update_workspace.py           # Single workspace update (not in main menu)

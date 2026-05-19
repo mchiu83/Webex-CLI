@@ -61,6 +61,25 @@ def _clean_ext(value: str) -> str:
     return re.sub(r'[^0-9]', '', str(value).strip())
 
 
+def _derive_extension(did: str, location_name: str) -> str:
+    """
+    Derive a 7-digit extension from a 10-digit DID using the store number
+    embedded in the location name (e.g. '0387-North Canton' -> prefix '387').
+    Returns store_prefix (3 digits) + last 4 digits of DID.
+    Returns empty string if the pattern cannot be determined.
+    """
+    if not did or len(did) < 10:
+        return ""
+    # Extract leading store number: first token before '-', strip leading zeros,
+    # keep last 3 digits (e.g. '0387' -> '387', '0042' -> '042')
+    match = re.match(r'^0*(\d{3,})', location_name.strip())
+    if not match:
+        return ""
+    store_num = match.group(1)[-3:]   # last 3 digits of the store number
+    last_four = did[-4:]
+    return store_num + last_four
+
+
 def _parse_aa_blocks(sheet_data: list, fallback_timezone: str = "America/Chicago") -> list:
     """
     Parse the four fixed AA blocks from the sheet.
@@ -77,15 +96,29 @@ def _parse_aa_blocks(sheet_data: list, fallback_timezone: str = "America/Chicago
         if not aa_name:
             continue
 
-        # DID / extension from col D of header row
-        # Values prefixed with "DID/Ext:" are AA extensions.
-        # Raw 10-digit numbers are store DIDs to assign as phoneNumber.
+        # DID / extension from col D of header row.
+        # Supported formats:
+        #   "DID/Ext: 3872197"          -> extension only (7-digit)
+        #   "6304366460"                -> DID only (10-digit phone number)
+        #   "6304366460 / 3876460"      -> DID + separate extension
+        #   "DID: 6304366460 / Ext: 3876460"  -> explicit labeled form
         did_raw = str(header_row[COL_DEST]).strip() if len(header_row) > COL_DEST and header_row[COL_DEST] else ""
+
         if re.match(r'(?i)did/ext:', did_raw):
+            # Pure extension — no DID
             did_raw   = re.sub(r'(?i)did/ext:\s*', '', did_raw).strip()
             did_clean = _clean_ext(did_raw)
+            ext_clean = ""
+        elif '/' in did_raw:
+            # Combined "DID / Ext" format — strip any labels and split on /
+            parts     = did_raw.split('/', 1)
+            did_part  = re.sub(r'(?i)did\s*:', '', parts[0]).strip()
+            ext_part  = re.sub(r'(?i)ext\s*:', '', parts[1]).strip()
+            did_clean = _clean_ext(did_part)
+            ext_clean = _clean_ext(ext_part)
         else:
             did_clean = _clean_ext(did_raw)   # raw DID — digits only
+            ext_clean = ""
 
         # Key configurations
         key_configs = []
@@ -132,6 +165,7 @@ def _parse_aa_blocks(sheet_data: list, fallback_timezone: str = "America/Chicago
         aas.append({
             'name':         aa_name,
             'did':          did_clean,
+            'ext':          ext_clean,   # optional separate extension when did is a raw DID
             'key_configs':  key_configs,
             'schedule_map': schedule_map,
             'timezone_raw': tz_raw,
@@ -432,7 +466,8 @@ def _validate_schedule_exists(api, location_id: str, schedule_name: str) -> bool
     )
 
 
-def _build_aa_payload(aa: dict, greeting_block: dict, schedule_name: str, location_id: str) -> dict:
+def _build_aa_payload(aa: dict, greeting_block: dict, schedule_name: str, location_id: str,
+                      location_name: str = "") -> dict:
     """
     Build the full POST body for creating an Auto Attendant.
     After-hours menu mirrors business hours menu (same keys, same greeting).
@@ -472,6 +507,10 @@ def _build_aa_payload(aa: dict, greeting_block: dict, schedule_name: str, locati
     if aa['did']:
         if len(aa['did']) >= 10:
             payload["phoneNumber"] = f"+1{aa['did']}" if len(aa['did']) == 10 else aa['did']
+            # Use explicit extension if provided, otherwise derive from DID + location name
+            ext = aa.get('ext') or _derive_extension(aa['did'], location_name)
+            if ext:
+                payload["extension"] = ext
         else:
             payload["extension"] = aa['did']
 
@@ -564,7 +603,7 @@ def _compare_key_configs(desired: list, actual_menu: dict) -> list:
 
 def _validate_and_update_existing_aa(
     api, location_id: str, aa_id: str, aa: dict,
-    greeting_block: dict, schedule_name: str
+    greeting_block: dict, schedule_name: str, location_name: str = ""
 ) -> bool:
     """
     Fetch the existing AA, compare all settings against the worksheet definition,
@@ -587,6 +626,10 @@ def _validate_and_update_existing_aa(
             expected_phone = f"+1{aa['did']}" if len(aa['did']) == 10 else aa['did']
             if actual_phone != _clean_ext(expected_phone):
                 diffs.append(f"  Phone number: expected='{expected_phone}'  actual='{details.get('phoneNumber', '')}'")
+            # Check extension — use explicit ext or derive from DID + location name
+            expected_ext = aa.get('ext') or _derive_extension(aa['did'], location_name)
+            if expected_ext and actual_ext != expected_ext:
+                diffs.append(f"  Extension:    expected='{expected_ext}'  actual='{actual_ext}'")
         else:
             if actual_ext != aa['did']:
                 diffs.append(f"  Extension:    expected='{aa['did']}'  actual='{actual_ext}'")
@@ -663,6 +706,9 @@ def _validate_and_update_existing_aa(
     if aa['did']:
         if len(aa['did']) >= 10:
             update_payload["phoneNumber"] = f"+1{aa['did']}" if len(aa['did']) == 10 else aa['did']
+            ext = aa.get('ext') or _derive_extension(aa['did'], location_name)
+            if ext:
+                update_payload["extension"] = ext
         else:
             update_payload["extension"] = aa['did']
 
@@ -697,7 +743,8 @@ def configure_auto_attendants(api, location_data: dict, filepath: str, read_exce
         print("\nAuto Attendant configuration skipped.")
         return
 
-    location_id = location_data['id']
+    location_id   = location_data['id']
+    location_name = location_data.get('name', '')
 
     # Fetch the location's IANA timezone to use as fallback for AAs that
     # don't have an explicit timezone in the sheet
@@ -746,8 +793,16 @@ def configure_auto_attendants(api, location_data: dict, filepath: str, read_exce
 
     print(f"  Found {len(aa_list)} Auto Attendant(s):")
     for aa in aa_list:
-        ext_or_did = aa['did'] if aa['did'] else "(no number)"
-        print(f"    - {aa['name']}  [{ext_or_did}]  TZ: {aa['timezone']}  Keys: {len(aa['key_configs'])}")
+        if aa['did'] and len(aa['did']) >= 10:
+            did_display = f"DID: +1{aa['did']}" if len(aa['did']) == 10 else f"DID: {aa['did']}"
+            derived_ext = aa.get('ext') or _derive_extension(aa['did'], location_name)
+            if derived_ext:
+                did_display += f"  Ext: {derived_ext}"
+        elif aa['did']:
+            did_display = f"Ext: {aa['did']}"
+        else:
+            did_display = "(no number)"
+        print(f"    - {aa['name']}  [{did_display}]  TZ: {aa['timezone']}  Keys: {len(aa['key_configs'])}")
 
     # -----------------------------------------------------------------------
     # 4. Resolve schedule name — just validate it exists, pass name as string
@@ -769,24 +824,38 @@ def configure_auto_attendants(api, location_data: dict, filepath: str, read_exce
     def _find_greeting_block(aa_name: str) -> dict:
         """
         Find the best matching greeting wav for this AA by matching the menu key
-        (col L) against the AA name. Tries full key match first, then last word
-        of the key (e.g. 'Main Menu' -> 'main' matches '...Main').
+        (col L) against the AA name.
+
+        Matching strategy (in order of priority):
+          1. Full key match  — entire key is a substring of the AA name
+             e.g. key "directions" in "0387-north canton-directions"
+          2. Any-word match  — any word of the key matches the last '-' segment
+             of the AA name (case-insensitive)
+             e.g. key "main menu" -> word "main" matches last segment "main"
+                  key "store hours" -> word "store" or "hours" matches "store hours"
         Falls back to DEFAULT if no match found.
         """
-        aa_lower = aa_name.lower()
+        aa_lower    = aa_name.lower()
+        # Last segment after the final '-' (e.g. "main" from "0387-north canton-main")
+        aa_last_seg = aa_lower.rsplit('-', 1)[-1].strip()
+
         for menu_key, wav_filename in greeting_map.items():
             wav_lower = wav_filename.lower()
             if wav_lower not in resolved_announcements:
                 continue
-            # Full key match (e.g. "directions" in "0387-north canton-directions")
-            if menu_key in aa_lower:
+            key_lower = menu_key.lower()
+
+            # 1. Full key is a substring of the AA name
+            if key_lower in aa_lower:
                 level = announcement_levels.get(wav_lower, "ORGANIZATION")
                 return _build_menu_greeting(wav_filename, resolved_announcements[wav_lower], level)
-            # Last word of key match (e.g. "main" from "main menu" in "...canton-main")
-            last_word = menu_key.split()[-1]
-            if last_word and last_word in aa_lower:
+
+            # 2. Any word of the key matches the last segment of the AA name
+            key_words = key_lower.split()
+            if any(word and word in aa_last_seg for word in key_words):
                 level = announcement_levels.get(wav_lower, "ORGANIZATION")
                 return _build_menu_greeting(wav_filename, resolved_announcements[wav_lower], level)
+
         return {"greeting": "DEFAULT"}
 
     # -----------------------------------------------------------------------
@@ -809,7 +878,7 @@ def configure_auto_attendants(api, location_data: dict, filepath: str, read_exce
             print(f"  Already exists in Control Hub (ID: {existing_id})")
             _validate_and_update_existing_aa(
                 api, location_id, existing_id, aa,
-                greeting_block, schedule_name
+                greeting_block, schedule_name, location_name
             )
             created_aas[aa['name']] = existing_id
             continue
@@ -819,7 +888,7 @@ def configure_auto_attendants(api, location_data: dict, filepath: str, read_exce
             print(f"  Skipping: no phone number or extension defined in sheet — API requires at least one.")
             continue
 
-        payload = _build_aa_payload(aa, greeting_block, schedule_name, location_id)
+        payload = _build_aa_payload(aa, greeting_block, schedule_name, location_id, location_name)
 
         print(f"  Creating...")
         result = api.call(
@@ -844,7 +913,7 @@ def configure_auto_attendants(api, location_data: dict, filepath: str, read_exce
                     continue
                 # Retry with extension only
                 fallback_aa = dict(aa, did=ext_input)
-                payload = _build_aa_payload(fallback_aa, greeting_block, schedule_name, location_id)
+                payload = _build_aa_payload(fallback_aa, greeting_block, schedule_name, location_id, location_name)
                 print(f"  Retrying with extension {ext_input}...")
                 result = api.call(
                     "POST",

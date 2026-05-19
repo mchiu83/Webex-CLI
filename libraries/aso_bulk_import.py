@@ -163,10 +163,12 @@ def check_mac_conflicts(api, preview_items):
     """
     import re
 
-    # Collect MACs from workspace rows only (users don't get devices)
+    # Collect MACs from workspace rows only (users don't get devices).
+    # For Fax/Paging ATA 192 pairs the Paging row shares the Fax row's MAC —
+    # only submit the MAC once (tracked by the Fax row).
     mac_map = {}  # formatted_mac -> row number
     for item in preview_items:
-        if item['type'] == 'Workspace' and item['mac']:
+        if item['type'] == 'Workspace' and item['mac'] and not item.get('skip_device'):
             mac_raw = item['mac']
             mac_clean = re.sub(r'[-:\s]', '', mac_raw).upper()
             if re.match(r'^[0-9A-F]{12}$', mac_clean):
@@ -220,25 +222,39 @@ def process_bulk_import(api, location_data, filepath):
         create_workspace_from_row,
         configure_call_forwarding,
         configure_outgoing_permission,
-        configure_side_car_speed_dials
+        configure_side_car_speed_dials,
+        configure_ata_fax_line
     )
-    
+    from libraries.aso_validation import find_fax_paging_pairs
+
     users_data = read_excel_sheet(filepath, 'Webex Users')
     if not users_data or len(users_data) < 2:
         print("Error: Could not read data")
         return
-    
+
     headers = users_data[0]
     data_rows = users_data[1:]
-    
+
+    # Detect Fax/Paging ATA 192 pairs.
+    # Both get their own workspace. Paging gets the device (port 1).
+    # Fax workspace is created without a device (skip_device=True).
+    # After both workspaces exist, the device members API assigns Fax as port 2.
+    fax_paging_pairs = find_fax_paging_pairs(data_rows)
+    paging_row_indices = {
+        row_idx for row_idx, info in fax_paging_pairs.items() if info['role'] == 'paging'
+    }
+    fax_row_indices = {
+        row_idx for row_idx, info in fax_paging_pairs.items() if info['role'] == 'fax'
+    }
+
     print(f"\n{'='*80}")
     print("Import Preview")
     print(f"{'='*80}")
-    
+
     users_count = 0
     workspaces_count = 0
     preview_items = []
-    
+
     for row_idx, row in enumerate(data_rows, start=2):
         user_type = str(row[9]).strip().lower() if len(row) > 9 else ""
         display_name = str(row[12]).strip() if len(row) > 12 else "Unknown"
@@ -246,7 +262,7 @@ def process_bulk_import(api, location_data, filepath):
         phone_number = str(row[3]).strip() if len(row) > 3 and row[3] else ""
         device_model = str(row[10]).strip() if len(row) > 10 else ""
         mac_address = str(row[11]).strip() if len(row) > 11 and row[11] else ""
-        
+
         if user_type == 'user':
             users_count += 1
             preview_items.append({
@@ -256,29 +272,48 @@ def process_bulk_import(api, location_data, filepath):
                 'ext': extension,
                 'phone': phone_number,
                 'device': device_model,
-                'mac': mac_address
+                'mac': mac_address,
+                'skip_device': False
             })
-        else:
+        elif row_idx in fax_row_indices:
             workspaces_count += 1
+            paging_row_idx = fax_paging_pairs[row_idx]['partner']
             preview_items.append({
                 'row': row_idx,
                 'type': 'Workspace',
-                'name': display_name,
+                'name': display_name + " [ATA FXS Port 2 - no device]",
                 'ext': extension,
                 'phone': phone_number,
                 'device': device_model,
-                'mac': mac_address
+                'mac': mac_address,
+                'skip_device': True
             })
-    
-    print(f"{'Row':<5} {'Type':<10} {'Name':<25} {'Ext':<8} {'Phone':<12} {'Device':<20} {'MAC Address':<17}")
-    print(f"{'-'*97}")
+        else:
+            workspaces_count += 1
+            note = " [ATA FXS Port 1]" if row_idx in paging_row_indices else ""
+            preview_items.append({
+                'row': row_idx,
+                'type': 'Workspace',
+                'name': display_name + note,
+                'ext': extension,
+                'phone': phone_number,
+                'device': device_model,
+                'mac': mac_address,
+                'skip_device': False
+            })
+
+    print(f"{'Row':<5} {'Type':<10} {'Name':<40} {'Ext':<8} {'Phone':<12} {'Device':<20} {'MAC Address':<17}")
+    print(f"{'-'*112}")
     for item in preview_items:
-        print(f"{item['row']:<5} {item['type']:<10} {item['name']:<25} {item['ext']:<8} {item['phone']:<12} {item['device']:<20} {item['mac']:<17}")
-    
-    print(f"\n{'='*97}")
+        print(f"{item['row']:<5} {item['type']:<10} {item['name']:<40} {item['ext']:<8} {item['phone']:<12} {item['device']:<20} {item['mac']:<17}")
+
+    print(f"\n{'='*112}")
     print(f"Total: {len(preview_items)} items ({users_count} users, {workspaces_count} workspaces)")
+    if fax_paging_pairs:
+        paging_count = len(paging_row_indices)
+        print(f"Note: {paging_count} Fax/Paging ATA 192 pair(s) - Paging=Port 1 (with device), Fax=Port 2 (workspace only, assigned via device members API)")
     print(f"Note: Users will be skipped (not yet implemented)")
-    print(f"{'='*97}")
+    print(f"{'='*112}")
 
     if not check_mac_conflicts(api, preview_items):
         return
@@ -287,26 +322,38 @@ def process_bulk_import(api, location_data, filepath):
     if confirm not in ['', 'y', 'yes']:
         print("Import cancelled.")
         return
-    
+
     print(f"\n{'='*60}")
     print("Starting Bulk Import Process")
     print(f"{'='*60}")
-    
+
     results = {'users': 0, 'workspaces_created': 0, 'workspaces_failed': 0, 'errors': []}
     workspace_map = {}
-    
+
     for row_idx, row in enumerate(data_rows, start=2):
         user_type = str(row[9]).strip().lower() if len(row) > 9 else ""
         display_name = str(row[12]).strip() if len(row) > 12 else "Unknown"
-        
+
         if user_type == 'user':
             results['users'] += 1
             print(f"Row {row_idx}: Skipping user '{display_name}' (user provisioning not yet implemented)")
             continue
-        
-        print(f"\nRow {row_idx}: Creating workspace '{display_name}'...")
-        workspace_id, error = create_workspace_from_row(api, location_data, row, headers)
-        
+
+        is_paging = row_idx in paging_row_indices
+        is_fax    = row_idx in fax_row_indices
+
+        if is_paging:
+            print(f"\nRow {row_idx}: Creating Paging workspace '{display_name}' (ATA 192 FXS Port 1 + device)...")
+        elif is_fax:
+            print(f"\nRow {row_idx}: Creating Fax workspace '{display_name}' (ATA 192 FXS Port 2 - no device)...")
+        else:
+            print(f"\nRow {row_idx}: Creating workspace '{display_name}'...")
+
+        workspace_id, error = create_workspace_from_row(
+            api, location_data, row, headers,
+            skip_device=is_fax  # Fax workspace gets no device — assigned via members API later
+        )
+
         if workspace_id:
             results['workspaces_created'] += 1
             workspace_map[row_idx] = workspace_id
@@ -319,37 +366,88 @@ def process_bulk_import(api, location_data, filepath):
             results['workspaces_failed'] += 1
             print(f"  Failed: {error}")
             results['errors'].append(f"Row {row_idx}: {error}")
-    
+
+    # --- ATA 192 FXS Port 2 Assignment ---
+    # Now that both Paging and Fax workspaces exist, fetch the Paging device ID
+    # and use the device members API to assign Fax as port 2.
+    if fax_paging_pairs:
+        print(f"\n{'='*60}")
+        print("Configuring ATA 192 FXS Port 2 (Fax) Assignment")
+        print(f"{'='*60}")
+        for paging_row_idx in paging_row_indices:
+            fax_row_idx      = fax_paging_pairs[paging_row_idx]['partner']
+            paging_ws_id     = workspace_map.get(paging_row_idx)
+            fax_ws_id        = workspace_map.get(fax_row_idx)
+            paging_name      = str(data_rows[paging_row_idx - 2][12]).strip() if len(data_rows[paging_row_idx - 2]) > 12 else f"Row {paging_row_idx}"
+            fax_name         = str(data_rows[fax_row_idx - 2][12]).strip()    if len(data_rows[fax_row_idx - 2]) > 12    else f"Row {fax_row_idx}"
+
+            if not paging_ws_id or not fax_ws_id:
+                msg = f"Skipping FXS port 2 config — workspace missing (paging={paging_ws_id}, fax={fax_ws_id})"
+                print(f"  Warning: {msg}")
+                results['errors'].append(msg)
+                continue
+
+            # Fetch the calling device ID from the Paging workspace
+            print(f"\n  Fetching ATA 192 device from Paging workspace '{paging_name}'...")
+            devices_result = api.call(
+                "GET",
+                f"telephony/config/workspaces/{paging_ws_id}/devices",
+                params={"orgId": api.org_id}
+            )
+            if "error" in devices_result:
+                msg = f"Could not fetch device for Paging workspace: {devices_result['error']}"
+                print(f"  Warning: {msg}")
+                results['errors'].append(msg)
+                continue
+
+            devices = devices_result.get('devices', [])
+            if not devices:
+                msg = f"No device found on Paging workspace '{paging_name}' — skipping port 2 assignment"
+                print(f"  Warning: {msg}")
+                results['errors'].append(msg)
+                continue
+
+            paging_device_id = devices[0].get('id')
+            print(f"  Device ID: {paging_device_id}")
+            print(f"  Port 1: {paging_name} (row {paging_row_idx})")
+            print(f"  Port 2: {fax_name} (row {fax_row_idx})")
+
+            fax_error = configure_ata_fax_line(api, paging_device_id, paging_ws_id, fax_ws_id)
+            if fax_error:
+                print(f"  Warning: FXS port 2 assignment failed: {fax_error}")
+                results['errors'].append(f"Rows {paging_row_idx}/{fax_row_idx}: FXS port 2 failed - {fax_error}")
+            else:
+                print(f"  Success: Fax workspace assigned to FXS Port 2")
     if workspace_map:
         print(f"\n{'='*60}")
         print("Configuring Call Forwarding & Business Continuity")
         print(f"{'='*60}")
-        
+
         for row_idx, workspace_id in workspace_map.items():
             row = data_rows[row_idx - 2]
             display_name = str(row[12]).strip() if len(row) > 12 else "Unknown"
-            
+
             print(f"\nRow {row_idx}: Configuring '{display_name}'...")
             error = configure_call_forwarding(api, workspace_id, row)
-            
+
             if error:
                 print(f"  Warning: {error}")
                 results['errors'].append(f"Row {row_idx}: Call forwarding failed - {error}")
             else:
                 print(f"  Success: Call forwarding configured")
-    
+
     if workspace_map:
         print(f"\n{'='*60}")
         print("Configuring Outgoing Calling Permissions")
         print(f"{'='*60}")
-        
+
         for row_idx, workspace_id in workspace_map.items():
             row = data_rows[row_idx - 2]
             display_name = str(row[12]).strip() if len(row) > 12 else "Unknown"
-            
+
             print(f"\nRow {row_idx}: Checking '{display_name}'...")
             error, was_configured = configure_outgoing_permission(api, workspace_id, row)
-            
+
             if was_configured:
                 if error:
                     print(f"  Warning: {error}")
