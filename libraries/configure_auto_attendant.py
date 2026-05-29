@@ -731,13 +731,21 @@ def _validate_and_update_existing_aa(
     return True
 
 
-def configure_auto_attendants(api, location_data: dict, filepath: str, read_excel_sheet):
+def configure_auto_attendants(api, location_data: dict, filepath: str, read_excel_sheet,
+                              scaffold_only: bool = False):
     """
     Main entry point: read the Webex Auto Attendant sheet and create all four AAs.
+
+    If scaffold_only=True, Auto Attendants are created even when no phone number
+    or extension is defined in the sheet.  Numbers/extensions that ARE present in
+    the sheet will still be assigned normally.
     """
     from libraries.aso_bulk_import import read_excel_sheet as _read  # noqa: F401
 
+    mode_label = " (Scaffold Mode)" if scaffold_only else ""
     print(f"\n{'='*60}")
+    print(f"Auto Attendant Configuration{mode_label}")
+    print(f"{'='*60}")
     proceed = input("\nProceed with Auto Attendant configuration? (Y/n): ").strip().lower()
     if proceed not in ['', 'y', 'yes']:
         print("\nAuto Attendant configuration skipped.")
@@ -884,7 +892,7 @@ def configure_auto_attendants(api, location_data: dict, filepath: str, read_exce
             continue
 
         # Does not exist — create it
-        if not aa['did']:
+        if not aa['did'] and not scaffold_only:
             print(f"  Skipping: no phone number or extension defined in sheet — API requires at least one.")
             continue
 

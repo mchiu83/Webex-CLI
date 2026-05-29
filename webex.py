@@ -277,6 +277,20 @@ class WebexCLI:
         configure_auto_attendants(self.api, location, filepath, read_excel_sheet)
 
     # ------------------------------------------------------------------
+    # Option 3: Scaffold Auto Attendant (no extensions/numbers)
+    # ------------------------------------------------------------------
+    def _run_scaffold_auto_attendant(self):
+        from libraries.configure_auto_attendant import configure_auto_attendants
+
+        result = self._reset_bootstrap()
+        if not result:
+            return
+        filepath, location = result
+
+        configure_auto_attendants(self.api, location, filepath, read_excel_sheet,
+                                  scaffold_only=True)
+
+    # ------------------------------------------------------------------
     # Helper: resolve extension -> workspace ID map from Control Hub
     # ------------------------------------------------------------------
     def _build_workspace_map(self, filepath, location):
@@ -330,12 +344,13 @@ class WebexCLI:
                 [
                     "ASO Bulk Import Tool (All in One)",
                     "Reset Store",
+                    "Scaffold Auto Attendant",
                     "Exit"
                 ],
                 show_back=False
             )
             
-            if choice == "/b" or choice == "3":
+            if choice == "/b" or choice == "4":
                 print("\nExiting...")
                 print("Session ended")
                 self.cleanup()
@@ -345,6 +360,9 @@ class WebexCLI:
                 input("\nPress Enter to continue...")
             elif choice == "2":
                 self._run_reset_store()
+                input("\nPress Enter to continue...")
+            elif choice == "3":
+                self._run_scaffold_auto_attendant()
                 input("\nPress Enter to continue...")
             else:
                 print("Invalid choice. Please try again.")
