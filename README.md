@@ -71,7 +71,8 @@ python webex.py
 ```
 1. ASO Bulk Import Tool (All in One)
 2. Reset Store
-3. Exit
+3. Scaffold Auto Attendant
+4. Exit
 ```
 
 ---
@@ -188,6 +189,23 @@ Resources deleted/reset (with confirmation at each step):
 - Location announcements
 - Call park groups
 - Call park extensions
+
+---
+
+## Scaffold Auto Attendant
+
+Creates Auto Attendant structures from the `Webex Auto Attendant` sheet without requiring phone numbers or extensions to be present. This is useful for pre-building the AA framework (menus, greetings, schedules, key mappings) before DIDs have been assigned to the location.
+
+**Key differences from the full ASO import AA step:**
+- Uses a lightweight bootstrap (file + location validation only — no number availability checks)
+- AAs are created even if no phone number or extension is defined in the sheet
+- If a number or extension *is* present in the sheet, it will still be assigned normally
+- All other behavior is identical: audio uploads, schedule validation, menu wiring, and cross-AA transfers all run as usual
+
+**When to use:**
+- Numbers haven't been ported/provisioned yet but you want the AA structure ready
+- You want to pre-configure menus and greetings ahead of a cutover window
+- Re-running after numbers are added to the sheet will update existing AAs with the new numbers
 
 ---
 

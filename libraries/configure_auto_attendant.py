@@ -370,15 +370,10 @@ def _resolve_announcements(api, location_id: str, greeting_map: dict) -> dict | 
                 errors.append(wav_filename)
                 continue
 
-            # Ask scope
-            print(f"    Upload scope:")
-            print(f"      L - Location only (this location)")
-            print(f"      G - Global (available to all locations)")
-            scope_choice = input(f"    Choice (L/G): ").strip().upper()
-            scope = "global" if scope_choice == "G" else "location"
-            scope_label = "globally" if scope == "global" else f"to location"
+            # Always upload at global (organization) scope
+            scope = "global"
 
-            print(f"    Uploading {scope_label}...")
+            print(f"    Uploading globally...")
             ann_id = _upload_announcement(api, location_id, bulk_path, wav_filename, scope)
             if ann_id:
                 print(f"    Uploaded successfully (ID: {ann_id})")
