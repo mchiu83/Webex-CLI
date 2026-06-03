@@ -18,6 +18,8 @@ A Python CLI tool for bulk provisioning Webex Calling locations via the Webex Co
   - Business hours schedule creation (`24-7`, `8-5NBD`)
   - Translation pattern pre-validation
 - **Reset Store** — tear down and re-provision an existing location (workspaces, hunt groups, auto attendants, announcements, call park groups/extensions)
+- **View Organization License Usage** — display consumed/total/available license counts across all subscriptions
+- **Reassign Workspace Calling Subscription** — bulk-move workspace Calling licenses from one subscription to another via the API
 - Dual session logging: CLI transcript + raw API call log
 - Menu-driven interface with `/b` back navigation
 
@@ -72,7 +74,9 @@ python webex.py
 1. ASO Bulk Import Tool (All in One)
 2. Reset Store
 3. Scaffold Auto Attendant
-4. Exit
+4. View Organization License Usage
+5. Reassign Workspace Calling Subscription
+6. Exit
 ```
 
 ---
@@ -209,6 +213,45 @@ Creates Auto Attendant structures from the `Webex Auto Attendant` sheet without 
 
 ---
 
+## View Organization License Usage
+
+Displays a summary of all licenses across every subscription in the organization. Fetches data from the Webex `GET /licenses` API and presents a table showing:
+
+- License name
+- Consumed units
+- Total units
+- Available units
+- Usage percentage
+
+Licenses are grouped by subscription ID, with an overall total row at the bottom. Useful for quickly identifying overconsumed subscriptions or available capacity before provisioning.
+
+---
+
+## Reassign Workspace Calling Subscription
+
+Moves workspace Calling licenses from one subscription to another via the API. This is the programmatic equivalent of manually reassigning each workspace's subscription in Control Hub.
+
+**Use case:** When a subscription is overconsumed (e.g. 818 workspaces on a 809-license subscription) and another subscription has available capacity.
+
+**Workflow:**
+
+1. Fetches all organization licenses and filters to "Webex Calling - Workspaces" entries
+2. Displays each with subscription ID, consumed/total/available counts
+3. Prompts for source (move FROM) and target (move TO) subscription
+4. Fetches all workspaces with pagination, filters to those assigned the source license
+5. Lists affected workspaces with # and display name
+6. Offers a selection filter — enter a range (e.g. `1-4`), comma-separated numbers (e.g. `1,3,5`), a combination (e.g. `1-4,7,10-12`), or press Enter to include all
+7. If filtered, re-displays the narrowed list
+8. Shows a summary and requires typing `yes` to confirm
+9. Updates each workspace via `PUT /workspaces/{id}`, swapping the license ID
+10. Reports success/failure counts with a progress counter
+
+**Rate limiting:** Pauses 1 second every 10 requests to avoid 429 responses.
+
+**Note:** Webex license usage counts may take a few minutes to reflect changes after reassignment.
+
+---
+
 ## Auto Attendant Details
 
 The `Webex Auto Attendant` sheet defines up to four AA blocks. For each:
@@ -274,7 +317,9 @@ Schedule names are read from the `Webex Auto Attendant` sheet (column J, rows 23
     ├── update_workspace.py           # Single workspace update (not in main menu)
     ├── delete_workspace.py           # Single workspace delete (not in main menu)
     ├── list_workspaces.py            # List workspaces (not in main menu)
-    └── view_workspace.py             # View workspace details (not in main menu)
+    ├── view_workspace.py             # View workspace details (not in main menu)
+    ├── view_license_usage.py         # Organization license usage display
+    └── reassign_workspace_licenses.py # Workspace calling license reassignment
 ```
 
 ## Logging

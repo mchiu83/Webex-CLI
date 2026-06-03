@@ -333,6 +333,22 @@ class WebexCLI:
         print(f"Resolved {len(workspace_map)} workspace(s).")
         return workspace_map, data_rows
 
+    # ------------------------------------------------------------------
+    # Option 4: View Organization License Usage
+    # ------------------------------------------------------------------
+    def _run_view_license_usage(self):
+        from libraries.view_license_usage import view_license_usage
+
+        view_license_usage(self.api)
+
+    # ------------------------------------------------------------------
+    # Option 5: Reassign Workspace Calling Subscription
+    # ------------------------------------------------------------------
+    def _run_reassign_workspace_licenses(self):
+        from libraries.reassign_workspace_licenses import reassign_workspace_licenses
+
+        reassign_workspace_licenses(self.api)
+
     def main_menu(self):
         print(f"\nWelcome to Webex Control Hub CLI")
         print(f"Organization ID: {self.org_id}")
@@ -345,12 +361,14 @@ class WebexCLI:
                     "ASO Bulk Import Tool (All in One)",
                     "Reset Store",
                     "Scaffold Auto Attendant",
+                    "View Organization License Usage",
+                    "Reassign Workspace Calling Subscription",
                     "Exit"
                 ],
                 show_back=False
             )
             
-            if choice == "/b" or choice == "4":
+            if choice == "/b" or choice == "6":
                 print("\nExiting...")
                 print("Session ended")
                 self.cleanup()
@@ -363,6 +381,12 @@ class WebexCLI:
                 input("\nPress Enter to continue...")
             elif choice == "3":
                 self._run_scaffold_auto_attendant()
+                input("\nPress Enter to continue...")
+            elif choice == "4":
+                self._run_view_license_usage()
+                input("\nPress Enter to continue...")
+            elif choice == "5":
+                self._run_reassign_workspace_licenses()
                 input("\nPress Enter to continue...")
             else:
                 print("Invalid choice. Please try again.")
