@@ -25,43 +25,28 @@ def _set_device_line_label(api, workspace_id, line_label):
 
     device_id = devices[0].get('id')
 
-    # Get current members to preserve existing config
-    members_result = api.call(
-        "GET",
-        f"telephony/config/devices/{device_id}/members",
-        params={"orgId": api.org_id}
-    )
-    if "error" in members_result:
-        return f"Could not fetch device members: {members_result['error']}"
-
-    members = members_result.get('members', [])
-    if not members:
-        # Fallback: construct the member entry for the primary owner
-        members = [{
-            "id": workspace_id,
-            "port": 1,
-            "primaryOwner": True,
-            "memberType": "PLACE",
-            "lineType": "PRIMARY",
-            "lineWeight": 1,
-            "hotlineEnabled": False,
-            "allowCallDeclineEnabled": True,
-            "lineLabel": line_label
-        }]
-    else:
-        # Add lineLabel to the primary owner member
-        for member in members:
-            if member.get('primaryOwner', False) or member.get('id') == workspace_id:
-                member['lineLabel'] = line_label
-                break
-        else:
-            # If no match found, set it on the first member
-            members[0]['lineLabel'] = line_label
+    # Construct the member payload directly with only the fields the PUT accepts.
+    # Echoing back the full GET response causes errors due to extra fields like location.
+    data = {
+        "members": [
+            {
+                "id": workspace_id,
+                "port": 1,
+                "primaryOwner": True,
+                "memberType": "PLACE",
+                "lineType": "PRIMARY",
+                "lineWeight": 1,
+                "hotlineEnabled": False,
+                "allowCallDeclineEnabled": True,
+                "lineLabel": line_label
+            }
+        ]
+    }
 
     result = api.call(
         "PUT",
         f"telephony/config/devices/{device_id}/members",
-        data={"members": members},
+        data=data,
         params={"orgId": api.org_id}
     )
 
