@@ -4,6 +4,72 @@
 import re
 from libraries.add_device import PHONE_MODELS, COLLAB_MODELS
 
+def _set_device_line_label(api, workspace_id, line_label):
+    """
+    Set the Line Label on a workspace's device after creation.
+    Fetches the calling device ID, then PUTs the members with lineLabel set.
+    Returns error string on failure, None on success.
+    """
+    # Get the calling device ID from the workspace
+    devices_result = api.call(
+        "GET",
+        f"telephony/config/workspaces/{workspace_id}/devices",
+        params={"orgId": api.org_id}
+    )
+    if "error" in devices_result:
+        return f"Could not fetch device: {devices_result['error']}"
+
+    devices = devices_result.get('devices', [])
+    if not devices:
+        return "No device found on workspace after creation"
+
+    device_id = devices[0].get('id')
+
+    # Get current members to preserve existing config
+    members_result = api.call(
+        "GET",
+        f"telephony/config/devices/{device_id}/members",
+        params={"orgId": api.org_id}
+    )
+    if "error" in members_result:
+        return f"Could not fetch device members: {members_result['error']}"
+
+    members = members_result.get('members', [])
+    if not members:
+        # Fallback: construct the member entry for the primary owner
+        members = [{
+            "id": workspace_id,
+            "port": 1,
+            "primaryOwner": True,
+            "memberType": "PLACE",
+            "lineType": "PRIMARY",
+            "lineWeight": 1,
+            "hotlineEnabled": False,
+            "allowCallDeclineEnabled": True,
+            "lineLabel": line_label
+        }]
+    else:
+        # Add lineLabel to the primary owner member
+        for member in members:
+            if member.get('primaryOwner', False) or member.get('id') == workspace_id:
+                member['lineLabel'] = line_label
+                break
+        else:
+            # If no match found, set it on the first member
+            members[0]['lineLabel'] = line_label
+
+    result = api.call(
+        "PUT",
+        f"telephony/config/devices/{device_id}/members",
+        data={"members": members},
+        params={"orgId": api.org_id}
+    )
+
+    if "error" in result:
+        return result['error']
+    return None
+
+
 def create_workspace_from_row(api, location_data, row, headers, skip_device=False):
     """Create workspace from Excel row data.
 
@@ -64,6 +130,13 @@ def create_workspace_from_row(api, location_data, row, headers, skip_device=Fals
         
         if "error" in device_result:
             return workspace_id, f"Workspace created but device failed: {device_result['error']}"
+        
+        # Set Line Label using the Phone Label (On Hook) value from column M
+        line_label = display_name  # Column 12 = "Phone Label (On Hook)"
+        if line_label:
+            label_error = _set_device_line_label(api, workspace_id, line_label)
+            if label_error:
+                return workspace_id, f"Workspace and device created but line label failed: {label_error}"
     
     return workspace_id, None
 
