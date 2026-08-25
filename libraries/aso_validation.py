@@ -98,7 +98,7 @@ def validate_location(api, filepath, read_excel_sheet):
     print(f"  Inferred Location: {inferred_location}")
     
     print(f"  Fetching telephony locations from Webex API...")
-    locations_result = api.call("GET", "telephony/config/locations", params={"orgId": api.org_id})
+    locations_result = api.call("GET", "telephony/config/locations", params={"orgId": api.org_id, "max": 1000})
     
     if "error" in locations_result:
         print(f"  Status: FAILED - Error fetching locations: {locations_result['error']}")

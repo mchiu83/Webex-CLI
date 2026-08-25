@@ -117,8 +117,18 @@ def create_workspace_from_row(api, location_data, row, headers, skip_device=Fals
             return workspace_id, f"Workspace created but device failed: {device_result['error']}"
         
         # Set Line Label using the Phone Label (On Hook) value from column M
+        # Line labels are only supported on MPP desk phones (68xx, 78xx, 88xx, 98xx series).
+        # Non-MPP devices (Cisco 840/860 DECT, Cisco 191/192 ATA, VG ATAs, conference phones)
+        # get their "Name" field automatically from the workspace display name.
+        NON_MPP_MODELS = [
+            "Cisco 840", "Cisco 860",
+            "Cisco 191", "Cisco 192",
+            "Cisco 7832", "Cisco 8832",
+            "Polycom 5000", "Polycom 6000",
+            "Cisco VG400 ATA", "Cisco VG410 ATA", "Cisco VG420 ATA",
+        ]
         line_label = display_name  # Column 12 = "Phone Label (On Hook)"
-        if line_label:
+        if line_label and device_model not in NON_MPP_MODELS:
             label_error = _set_device_line_label(api, workspace_id, line_label)
             if label_error:
                 return workspace_id, f"Workspace and device created but line label failed: {label_error}"
