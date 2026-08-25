@@ -2,18 +2,66 @@
 # Licensed under the MIT License - see LICENSE file for details
 
 PHONE_MODELS = [
+    # Cisco MPP Desk Phones
     "Cisco 6821", "Cisco 6841", "Cisco 6851", "Cisco 6861",
     "Cisco 6861 Wi-Fi", "Cisco 6871", "Cisco 6871",
+    "Cisco 6823", "Cisco 6825",
     "Cisco 7811", "Cisco 7821", "Cisco 7841", "Cisco 7861",
     "Cisco 8811", "Cisco 8841", "Cisco 8851", "Cisco 8861",
     "Cisco 8845", "Cisco 8865", "Cisco 8875",
-    "Cisco 9841", "Cisco 9851", "Cisco 9861", "Cisco 9871",
-    "Cisco 6823", "Cisco 6825",
+    "Cisco 8800 A-KEM", "Cisco 8800 BE-KEM",
+    "Cisco 9811", "Cisco 9841", "Cisco 9851", "Cisco 9861", "Cisco 9871",
+    # Cisco DECT
     "Cisco 840", "Cisco 860",
+    # Cisco Conference Phones
     "Cisco 7832", "Cisco 8832",
-    "Polycom 5000", "Polycom 6000",
+    # Cisco ATA
     "Cisco 191", "Cisco 192",
-    "Cisco VG400 ATA", "Cisco VG410 ATA", "Cisco VG420 ATA"
+    "Cisco VG400 ATA", "Cisco VG410 ATA", "Cisco VG420 ATA",
+    # AudioCodes Phones
+    "AudioCodes 425HD", "AudioCodes 445HD", "AudioCodes C450HD",
+    # AudioCodes ATA
+    "AudioCodes MP-124E (TLS 17FXS)",
+    "AudioCodes MP-504", "AudioCodes MP-508", "AudioCodes MP-516",
+    "AudioCodes MP-524", "AudioCodes MP-532", "AudioCodes MP-1288",
+    "AudioCodes MP202", "AudioCodes MP202R", "AudioCodes MP204", "AudioCodes MP204R",
+    # Poly ATA
+    "Poly ATA 400", "Poly ATA 402",
+    # Poly Conference Phones
+    "Poly Trio 8300", "Poly Trio 8500", "Poly Trio 8800", "Poly Trio C60",
+    # Poly Desk Phones
+    "Poly VVX 101", "Poly VVX 150", "Poly VVX 201", "Poly VVX 250",
+    "Poly VVX 301", "Poly VVX 311", "Poly VVX 350",
+    "Poly VVX 401", "Poly VVX 411", "Poly VVX 450",
+    "Poly VVX 501", "Poly VVX 601",
+    # Polycom (legacy branding in Control Hub)
+    "Polycom CCX400", "Polycom CCX500", "Polycom CCX505",
+    "Polycom CCX600", "Polycom CCX700",
+    "Polycom EE100", "Polycom EE220", "Polycom EE300", "Polycom EE320",
+    "Polycom EE350", "Polycom EE400", "Polycom EE450",
+    "Polycom EE500", "Polycom EE550",
+    "Polycom SSIP5000", "Polycom SSIP6000",
+    # SNOM Phones
+    "SNOM D385",
+    "SNOM D713", "SNOM D715", "SNOM D717", "SNOM D735",
+    "SNOM D785", "SNOM D787",
+    "SNOM D810", "SNOM D812", "SNOM D815",
+    # Yealink Desk Phones
+    "Yealink T31W", "Yealink T33G", "Yealink T34W", "Yealink T40G",
+    "Yealink T41S", "Yealink T42S", "Yealink T43U",
+    "Yealink T46S", "Yealink T46U", "Yealink T48S", "Yealink T48U",
+    "Yealink T53W", "Yealink T54W", "Yealink T57W",
+    "Yealink T58", "Yealink T58V",
+    "Yealink T73U", "Yealink T73W", "Yealink T74U", "Yealink T74W", "Yealink T77U",
+    "Yealink T85W", "Yealink T87W", "Yealink T88V", "Yealink T88W",
+    # Yealink Conference Phones
+    "Yealink CP920", "Yealink CP925", "Yealink CP960", "Yealink CP965",
+    # Yealink DECT Bases
+    "Yealink W52P", "Yealink W56P", "Yealink W60P", "Yealink W70P",
+    # Yealink Wi-Fi Handsets
+    "Yealink AX83H", "Yealink AX86R",
+    # User-friendly aliases (mapped to API strings via DEVICE_MODEL_API_MAP)
+    "Yealink AX86",
 ]
 
 COLLAB_MODELS = [
@@ -23,9 +71,13 @@ COLLAB_MODELS = [
     "Cisco Webex Room Kit", "Cisco Webex Room Kit Mini", "Cisco Webex Room Kit Plus",
     "Cisco Webex Room Kit Plus Precision 60", "Cisco Webex Room Kit Pro",
     "Cisco Room Kit EQ", "Cisco Room Kit EQX",
+    "Cisco Room Bar", "Cisco Room Bar Pro",
+    "Cisco Room Navigator", "Cisco Room Navigator for Table",
+    "Cisco Desk Camera 4K",
     "Cisco Webex Desk", "Cisco Webex Desk Mini", "Cisco Webex Desk Hub",
-    "Cisco Spark Board 55", "Cisco Room Navigator for Table",
-    "Cisco WebEx Codec Plus", "CS Codec Pro - stand alone", "Spark Room Kit unit"
+    "Cisco Spark Board 55",
+    "Cisco WebEx Codec Plus", "CS Codec Pro - stand alone", "Spark Room Kit unit",
+    "LG 55UN343H0UA", "GSM LG TV"
 ]
 
 def add_workspace_devices(api, workspace_id, supported_devices=None):
@@ -52,6 +104,10 @@ def add_workspace_devices(api, workspace_id, supported_devices=None):
         print("Invalid selection.")
         return
     
+    # Resolve the user-friendly model name to the Webex API model string
+    from libraries.workspace_config import DEVICE_MODEL_API_MAP
+    api_model = DEVICE_MODEL_API_MAP.get(model, model)
+
     print("\nDevice Provisioning Method:")
     print("1. Activation Code")
     print("2. MAC Address")
@@ -61,7 +117,7 @@ def add_workspace_devices(api, workspace_id, supported_devices=None):
         # Activation Code method
         data = {
             "workspaceId": workspace_id,
-            "model": model
+            "model": api_model
         }
         result = api.call("POST", f"devices/activationCode", data=data, params={"orgId": api.org_id})
         
@@ -94,7 +150,7 @@ def add_workspace_devices(api, workspace_id, supported_devices=None):
         
         data = {
             "mac": mac_formatted,
-            "model": model,
+            "model": api_model,
             "workspaceId": workspace_id
         }
         result = api.call("POST", "devices", data=data, params={"orgId": api.org_id})

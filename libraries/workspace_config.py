@@ -4,6 +4,14 @@
 import re
 from libraries.add_device import PHONE_MODELS, COLLAB_MODELS
 
+# Mapping from user-friendly model names (used in spreadsheets) to the exact
+# model strings accepted by the Webex API (POST /v1/devices).
+# Only entries that differ need to be listed here; models not in this dict
+# are sent to the API as-is.
+DEVICE_MODEL_API_MAP = {
+    "Yealink AX86": "Yealink AX86R",
+}
+
 def _set_device_line_label(api, workspace_id, line_label):
     """
     Set the Line Label on a workspace's device after creation.
@@ -107,7 +115,7 @@ def create_workspace_from_row(api, location_data, row, headers, skip_device=Fals
         
         device_data = {
             "mac": mac_formatted,
-            "model": device_model,
+            "model": DEVICE_MODEL_API_MAP.get(device_model, device_model),
             "workspaceId": workspace_id
         }
         
@@ -120,12 +128,51 @@ def create_workspace_from_row(api, location_data, row, headers, skip_device=Fals
         # Line labels are only supported on MPP desk phones (68xx, 78xx, 88xx, 98xx series).
         # Non-MPP devices (Cisco 840/860 DECT, Cisco 191/192 ATA, VG ATAs, conference phones)
         # get their "Name" field automatically from the workspace display name.
+        # Line labels are only supported on Cisco MPP desk phones (68xx, 78xx, 88xx, 98xx series).
+        # All other devices (DECT, ATA, conference phones, third-party phones)
+        # get their "Name" field automatically from the workspace display name.
         NON_MPP_MODELS = [
+            # Cisco non-MPP
             "Cisco 840", "Cisco 860",
             "Cisco 191", "Cisco 192",
             "Cisco 7832", "Cisco 8832",
-            "Polycom 5000", "Polycom 6000",
             "Cisco VG400 ATA", "Cisco VG410 ATA", "Cisco VG420 ATA",
+            "Cisco 8800 A-KEM", "Cisco 8800 BE-KEM",
+            # AudioCodes (all)
+            "AudioCodes 425HD", "AudioCodes 445HD", "AudioCodes C450HD",
+            "AudioCodes MP-124E (TLS 17FXS)",
+            "AudioCodes MP-504", "AudioCodes MP-508", "AudioCodes MP-516",
+            "AudioCodes MP-524", "AudioCodes MP-532", "AudioCodes MP-1288",
+            "AudioCodes MP202", "AudioCodes MP202R", "AudioCodes MP204", "AudioCodes MP204R",
+            # Poly / Polycom (all)
+            "Poly ATA 400", "Poly ATA 402",
+            "Poly Trio 8300", "Poly Trio 8500", "Poly Trio 8800", "Poly Trio C60",
+            "Poly VVX 101", "Poly VVX 150", "Poly VVX 201", "Poly VVX 250",
+            "Poly VVX 301", "Poly VVX 311", "Poly VVX 350",
+            "Poly VVX 401", "Poly VVX 411", "Poly VVX 450",
+            "Poly VVX 501", "Poly VVX 601",
+            "Polycom CCX400", "Polycom CCX500", "Polycom CCX505",
+            "Polycom CCX600", "Polycom CCX700",
+            "Polycom EE100", "Polycom EE220", "Polycom EE300", "Polycom EE320",
+            "Polycom EE350", "Polycom EE400", "Polycom EE450",
+            "Polycom EE500", "Polycom EE550",
+            "Polycom SSIP5000", "Polycom SSIP6000",
+            # SNOM (all)
+            "SNOM D385",
+            "SNOM D713", "SNOM D715", "SNOM D717", "SNOM D735",
+            "SNOM D785", "SNOM D787",
+            "SNOM D810", "SNOM D812", "SNOM D815",
+            # Yealink (all)
+            "Yealink T31W", "Yealink T33G", "Yealink T34W", "Yealink T40G",
+            "Yealink T41S", "Yealink T42S", "Yealink T43U",
+            "Yealink T46S", "Yealink T46U", "Yealink T48S", "Yealink T48U",
+            "Yealink T53W", "Yealink T54W", "Yealink T57W",
+            "Yealink T58", "Yealink T58V",
+            "Yealink T73U", "Yealink T73W", "Yealink T74U", "Yealink T74W", "Yealink T77U",
+            "Yealink T85W", "Yealink T87W", "Yealink T88V", "Yealink T88W",
+            "Yealink CP920", "Yealink CP925", "Yealink CP960", "Yealink CP965",
+            "Yealink W52P", "Yealink W56P", "Yealink W60P", "Yealink W70P",
+            "Yealink AX83H", "Yealink AX86R", "Yealink AX86",
         ]
         line_label = display_name  # Column 12 = "Phone Label (On Hook)"
         if line_label and device_model not in NON_MPP_MODELS:
